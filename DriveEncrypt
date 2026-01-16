@@ -6,11 +6,11 @@
 # Configuration
 # ----------------------------
 $SerialNumber = "YOUR_SERIAL_HERE"
-$PauseMinutesBetweenDrives = 30       # minutes pause between drives
+$PauseMinutesBetweenDrives = 30       # pause between drives
 $ProgressInterval = 5                  # seconds for live encryption progress
 
 # ----------------------------
-# Desktop path for both CSV and recovery keys
+# Desktop path for CSV and recovery keys
 # ----------------------------
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 
@@ -99,17 +99,9 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
 
     try {
         # ----------------------------
-        # 1️⃣ Add password protector first
+        # Enable BitLocker directly with password (Server 2016 safe)
         # ----------------------------
-        $Protector = Add-BitLockerKeyProtector -MountPoint $DriveLetter -Password $SecurePassword -ErrorAction Stop
-
-        # Short pause to ensure protector is registered before enabling encryption
-        Start-Sleep -Seconds 2
-
-        # ----------------------------
-        # 2️⃣ Enable BitLocker using the existing protector
-        # ----------------------------
-        Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
+        Enable-BitLocker -MountPoint $DriveLetter -Password $SecurePassword -UsedSpaceOnly -EncryptionMethod XtsAes256
 
         # ----------------------------
         # Track encryption progress
