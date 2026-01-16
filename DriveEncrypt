@@ -1,5 +1,5 @@
 # ============================
-# BitLocker Script (Final 2016+ Safe, Desktop Output, Dry-Run Prompt)
+# BitLocker Script (Final Server 2016+ Safe, Desktop Output, Dry-Run Prompt)
 # ============================
 
 # ----------------------------
@@ -99,17 +99,9 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
 
     try {
         # ----------------------------
-        # 1️⃣ Add password protector first (generates recovery key)
+        # Enable BitLocker using password directly (no prompt)
         # ----------------------------
-        $Protector = Add-BitLockerKeyProtector -MountPoint $DriveLetter -Password $SecurePassword -ErrorAction Stop
-
-        # Optional small pause to ensure protector is fully registered
-        Start-Sleep -Seconds 2
-
-        # ----------------------------
-        # 2️⃣ Enable BitLocker (unattended)
-        # ----------------------------
-        Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
+        Enable-BitLocker -MountPoint $DriveLetter -Password $SecurePassword -UsedSpaceOnly -EncryptionMethod XtsAes256
 
         # ----------------------------
         # Track encryption progress
