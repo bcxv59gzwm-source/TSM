@@ -1,27 +1,25 @@
 # ============================
-# BitLocker Script (Server 2016+, Two-Step Encryption + Password Protector)
+# BitLocker Script (Server 2016+, Recovery Key + Optional Password Prompt)
 # ============================
 
 # ----------------------------
 # Configuration
 # ----------------------------
-$SerialNumber = "YOUR_SERIAL_HERE"        # replace with actual serial
-$PauseMinutesBetweenDrives = 30           # pause between drives
-$ProgressInterval = 5                      # seconds for live encryption progress
+$SerialNumber = "YOUR_SERIAL_HERE"         # used for password protector
+$PauseMinutesBetweenDrives = 30            # pause between drives
+$ProgressInterval = 5                       # seconds for live encryption progress
 
 # ----------------------------
 # Desktop path for CSV and recovery keys
 # ----------------------------
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
-
-# Activity log CSV
 $CSVLogPath = Join-Path $DesktopPath "BitLocker_ActivityLog.csv"
 if (-not (Test-Path $CSVLogPath)) {
     "DriveLetter,VolumeLabel,SizeGB,DateTime,Status,RecoveryKey" | Out-File -FilePath $CSVLogPath -Encoding UTF8
 }
 
 # ----------------------------
-# BitLocker password
+# Construct BitLocker password
 # ----------------------------
 $PlainPassword = "B1T" + $SerialNumber + "L0K3r"
 $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
@@ -32,79 +30,60 @@ $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
 do {
     $DryRunInput = Read-Host "Do you want to run a dry run? (Y/N)"
 } while ($DryRunInput -notmatch '^[YyNn]$')
-
 $DryRun = if ($DryRunInput -match '^[Yy]$') { $true } else { $false }
 
-if ($DryRun) {
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN mode enabled. No drives will actually be encrypted.`n"
-} else {
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN disabled. Encryption will be performed.`n"
-}
+if ($DryRun) { Write-Host "DRY-RUN mode enabled. No drives will actually be encrypted.`n" }
+else { Write-Host "DRY-RUN disabled. Encryption will be performed.`n" }
 
 # ----------------------------
 # Identify eligible data drives (only drives with letters, exclude OS drive)
 # ----------------------------
 $AllVolumes = Get-BitLockerVolume |
-    Where-Object { 
-        $_.MountPoint -and
-        $_.MountPoint -match '^[A-Z]:$' -and
-        $_.MountPoint -ne "C:" -and
-        $_.VolumeType -eq 'Data'
-    }
+    Where-Object { $_.MountPoint -and $_.MountPoint -match '^[A-Z]:$' -and $_.MountPoint -ne "C:" -and $_.VolumeType -eq 'Data' }
 
-if (-not $AllVolumes) {
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - No eligible data drives found."
-    exit
-}
+if (-not $AllVolumes) { Write-Host "No eligible data drives found."; exit }
 
 # ----------------------------
 # Dry-Run Preview Table
 # ----------------------------
 if ($DryRun) {
-    Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: The following drives would be encrypted:`n"
-
-    $PreviewTable = $AllVolumes | ForEach-Object {
+    Write-Host "DRY-RUN: The following drives would be encrypted:`n"
+    $AllVolumes | ForEach-Object {
         [PSCustomObject]@{
             DriveLetter = $_.MountPoint
             VolumeLabel = if ($_.VolumeLabel) { $_.VolumeLabel } else { "N/A" }
             SizeGB      = if ($_.Capacity) { "{0:N2}" -f ($_.Capacity / 1GB) } else { "Unknown" }
-            Status      = $_.VolumeStatus
         }
-    } | Sort-Object @{Expression="DriveLetter";Ascending=$true}, @{Expression="SizeGB";Descending=$true}
-
-    $PreviewTable | Format-Table -AutoSize
+    } | Format-Table -AutoSize
     Write-Host "`n"
 }
 
 # ----------------------------
-# Encrypt each eligible drive one at a time
+# Encrypt each drive sequentially
 # ----------------------------
 $DriveCounter = 0
 
-foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";Ascending=$true}) {
-
+foreach ($TargetVolume in $AllVolumes | Sort-Object MountPoint) {
     $DriveCounter++
     $DriveLetter = $TargetVolume.MountPoint
     $VolumeLabel = if ($TargetVolume.VolumeLabel) { $TargetVolume.VolumeLabel } else { "N/A" }
 
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Selected drive: $DriveLetter ($VolumeLabel)"
+    Write-Host "[$DriveCounter] Selected drive: $DriveLetter ($VolumeLabel)"
 
     if ($DryRun) {
         $RecoveryKeyPlaceholder = "DRY-RUN-RECOVERY-KEY"
-        $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Completed,$RecoveryKeyPlaceholder"
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: Would start encryption and log: $LogEntry"
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: Would save recovery key file: $DesktopPath\$DriveLetter DriveBitLocker Recovery key ($RecoveryKeyPlaceholder).txt`n"
+        Write-Host "DRY-RUN: Would encrypt $DriveLetter and log recovery key as $RecoveryKeyPlaceholder`n"
         continue
     }
 
     try {
         # ----------------------------
-        # Step 1: Enable BitLocker using a recovery key (fully unattended)
+        # Step 1: Enable BitLocker with recovery key
         # ----------------------------
         Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
 
         # Track encryption progress
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption in progress for $DriveLetter..."
+        Write-Host "Encryption in progress for $DriveLetter..."
         do {
             Start-Sleep -Seconds $ProgressInterval
             $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
@@ -112,22 +91,12 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
             Write-Host ("Drive ${DriveLetter}: $Percent% encrypted") -NoNewline
             Write-Host "`r" -NoNewline
         } while ($CurrentVolume.VolumeStatus -ne "FullyEncrypted")
-        Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption complete for $DriveLetter"
+        Write-Host "`nEncryption complete for $DriveLetter"
 
-        # ----------------------------
-        # Step 2: Add password protector after encryption
-        # ----------------------------
-        Add-BitLockerKeyProtector -MountPoint $DriveLetter -Password $SecurePassword
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Password protector added to $DriveLetter"
-
-        # ----------------------------
         # Enable auto-unlock for non-OS drives
-        # ----------------------------
         Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
 
-        # ----------------------------
         # Retrieve recovery key
-        # ----------------------------
         $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
         $RecoveryProtector = $CurrentVolume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
         $RecoveryKey = $RecoveryProtector.RecoveryPassword
@@ -136,25 +105,30 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
         $RecoveryFileName = "${DriveLetter} DriveBitLocker Recovery key ($RecoveryKey).txt"
         $RecoveryFilePath = Join-Path $DesktopPath $RecoveryFileName
         "BitLocker Recovery Key: $RecoveryKey" | Out-File -FilePath $RecoveryFilePath -Encoding UTF8
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Recovery key saved to: $RecoveryFilePath"
+        Write-Host "Recovery key saved to: $RecoveryFilePath"
 
-        # Log activity to CSV on Desktop
+        # Log activity to CSV
         $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Completed,$RecoveryKey"
         Add-Content -Path $CSVLogPath -Value $LogEntry
 
+        # ----------------------------
+        # Step 2: OPTIONAL Password Protector
+        # ----------------------------
+        Write-Host "Now you can add the password protector to $DriveLetter."
+        Write-Host "Use the password format: $PlainPassword"
+        Read-Host "Press ENTER after manually adding the password protector via PowerShell GUI or console"
+
     } catch {
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - ERROR: Failed to encrypt drive $DriveLetter. $_"
+        Write-Host "ERROR: Failed to encrypt drive $DriveLetter. $_"
         $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Failed,NA"
         Add-Content -Path $CSVLogPath -Value $LogEntry
         continue
     }
 
-    # ----------------------------
     # Pause before next drive
-    # ----------------------------
     $PauseSeconds = $PauseMinutesBetweenDrives * 60
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Pausing $PauseMinutesBetweenDrives minutes ($PauseSeconds seconds) before next drive..."
+    Write-Host "Pausing $PauseMinutesBetweenDrives minutes before next drive..."
     Start-Sleep -Seconds $PauseSeconds
 }
 
-Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Script finished. Activity log: $CSVLogPath"
+Write-Host "Script finished. Activity log: $CSVLogPath"
