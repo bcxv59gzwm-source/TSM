@@ -1,13 +1,13 @@
 # ============================
-# BitLocker Script (Server 2016+ Safe, No Prompts, Desktop Output, Dry-Run Prompt)
+# BitLocker Script (Server 2016+, Two-Step Encryption + Password Protector)
 # ============================
 
 # ----------------------------
 # Configuration
 # ----------------------------
-$SerialNumber = "YOUR_SERIAL_HERE"
-$PauseMinutesBetweenDrives = 30       # pause between drives
-$ProgressInterval = 5                  # seconds for live encryption progress
+$SerialNumber = "YOUR_SERIAL_HERE"        # replace with actual serial
+$PauseMinutesBetweenDrives = 30           # pause between drives
+$ProgressInterval = 5                      # seconds for live encryption progress
 
 # ----------------------------
 # Desktop path for CSV and recovery keys
@@ -99,13 +99,11 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
 
     try {
         # ----------------------------
-        # Enable BitLocker directly with password (Server 2016 safe)
+        # Step 1: Enable BitLocker using a recovery key (fully unattended)
         # ----------------------------
-        Enable-BitLocker -MountPoint $DriveLetter -Password $SecurePassword -UsedSpaceOnly -EncryptionMethod XtsAes256
+        Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
 
-        # ----------------------------
         # Track encryption progress
-        # ----------------------------
         Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption in progress for $DriveLetter..."
         do {
             Start-Sleep -Seconds $ProgressInterval
@@ -117,38 +115,30 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
         Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption complete for $DriveLetter"
 
         # ----------------------------
+        # Step 2: Add password protector after encryption
+        # ----------------------------
+        Add-BitLockerKeyProtector -MountPoint $DriveLetter -Password $SecurePassword
+        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Password protector added to $DriveLetter"
+
+        # ----------------------------
         # Enable auto-unlock for non-OS drives
         # ----------------------------
-        if ($DriveLetter -ne "C:") {
-            try {
-                Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
-            } catch {
-                Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Warning: Could not enable auto-unlock on $DriveLetter. $_"
-            }
-        }
+        Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
 
         # ----------------------------
-        # Wait until recovery key exists
+        # Retrieve recovery key
         # ----------------------------
-        do {
-            Start-Sleep -Seconds 2
-            $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
-            $RecoveryProtector = $CurrentVolume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
-        } while (-not $RecoveryProtector)
-
+        $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
+        $RecoveryProtector = $CurrentVolume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
         $RecoveryKey = $RecoveryProtector.RecoveryPassword
 
-        # ----------------------------
         # Save recovery key to Desktop
-        # ----------------------------
         $RecoveryFileName = "${DriveLetter} DriveBitLocker Recovery key ($RecoveryKey).txt"
         $RecoveryFilePath = Join-Path $DesktopPath $RecoveryFileName
         "BitLocker Recovery Key: $RecoveryKey" | Out-File -FilePath $RecoveryFilePath -Encoding UTF8
         Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Recovery key saved to: $RecoveryFilePath"
 
-        # ----------------------------
         # Log activity to CSV on Desktop
-        # ----------------------------
         $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Completed,$RecoveryKey"
         Add-Content -Path $CSVLogPath -Value $LogEntry
 
