@@ -1,40 +1,40 @@
-# ====================================
-# Fully Unattended BitLocker Encryption - D Drive Only (Server 2016 Compatible)
-# ====================================
+# =========================================
+# Server 2016 BitLocker Hybrid Script - D: Drive
+# =========================================
 
 # ----------------------------
 # Configuration
 # ----------------------------
-$DriveLetter = "D:"
-$ProgressInterval = 5                   # seconds for live encryption progress
+$DriveLetter = "D:"                   # Drive to encrypt
+$SerialNumber = "YOUR_SERIAL_HERE"    # Serial number for your password
+$ProgressInterval = 5                  # Seconds between progress updates
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $CSVLogPath = Join-Path $DesktopPath "BitLocker_ActivityLog.csv"
 
-# Create CSV log header if it doesn't exist
+# Ensure CSV log exists
 if (-not (Test-Path $CSVLogPath)) {
     "DriveLetter,VolumeLabel,SizeGB,DateTime,Status,RecoveryKey" | Out-File -FilePath $CSVLogPath -Encoding UTF8
 }
 
 # ----------------------------
-# Get the volume info
+# Get volume info
 # ----------------------------
 $TargetVolume = Get-BitLockerVolume -MountPoint $DriveLetter
 if (-not $TargetVolume) {
     Write-Host "Drive $DriveLetter not found or no BitLocker volume exists."
     exit
 }
-
 $VolumeLabel = if ($TargetVolume.VolumeLabel) { $TargetVolume.VolumeLabel } else { "N/A" }
 
 # ----------------------------
-# Enable BitLocker with Recovery Key (fully unattended)
+# Step 1: Encrypt the drive with recovery key (unattended)
 # ----------------------------
 try {
     Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Starting encryption for $DriveLetter ($VolumeLabel)..."
 
     Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
 
-    # Live progress
+    # Show live progress
     do {
         Start-Sleep -Seconds $ProgressInterval
         $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
@@ -45,11 +45,10 @@ try {
 
     Write-Host "`nEncryption complete for $DriveLetter"
 
-    # Enable auto-unlock for non-OS drives
+    # Enable auto-unlock
     Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
 
     # Retrieve recovery key
-    $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
     $RecoveryProtector = $CurrentVolume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
     $RecoveryKey = $RecoveryProtector.RecoveryPassword
 
@@ -64,9 +63,23 @@ try {
     Add-Content -Path $CSVLogPath -Value $LogEntry
 
 } catch {
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - ERROR: Failed to encrypt drive $DriveLetter. $_"
+    Write-Host "ERROR: Failed to encrypt drive $DriveLetter. $_"
     $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Failed,NA"
     Add-Content -Path $CSVLogPath -Value $LogEntry
+    exit
 }
 
-Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Script finished. Activity log: $CSVLogPath"
+# ----------------------------
+# Step 2: Manual password unlock
+# ----------------------------
+Write-Host "`n"
+Write-Host "====================================================================="
+Write-Host "MANUAL STEP REQUIRED:"
+Write-Host "Server 2016 cannot automate password protectors for data drives."
+Write-Host "Please manually add a password protector to $DriveLetter using:"
+Write-Host "`tAdd-BitLockerKeyProtector -MountPoint $DriveLetter -PasswordProtector"
+Write-Host "Enter the password: B1T$SerialNumberL0K3r"
+Write-Host "====================================================================="
+Read-Host "Press ENTER once you have added the password protector..."
+
+Write-Host "`nScript finished. Activity log: $CSVLogPath"
