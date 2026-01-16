@@ -25,7 +25,7 @@ if (-not (Test-Path $CSVLogPath)) {
 # ----------------------------
 # Build BitLocker Password
 # ----------------------------
-$PlainPassword  = "B1T$SerialNumber" + "L0K3r"
+$PlainPassword  = "$SerialNumber" + ""
 $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
 
 # ----------------------------
