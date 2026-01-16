@@ -1,5 +1,5 @@
 # ============================
-# BitLocker Script (2016+ Safe, Desktop Output)
+# BitLocker Script (2016+ Safe, Desktop Output, Dry-Run Prompt)
 # ============================
 
 # ----------------------------
@@ -8,7 +8,6 @@
 $SerialNumber = "YOUR_SERIAL_HERE"
 $PauseMinutesBetweenDrives = 30       # minutes pause between drives
 $ProgressInterval = 5                  # seconds for live encryption progress
-$DryRun = $true                        # $true = preview only, $false = encrypt
 
 # ----------------------------
 # Desktop path for both CSV and recovery keys
@@ -24,9 +23,23 @@ if (-not (Test-Path $CSVLogPath)) {
 # ----------------------------
 # BitLocker password
 # ----------------------------
-# Use concatenation to avoid variable parsing errors
 $PlainPassword = "B1T" + $SerialNumber + "L0K3r"
 $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
+
+# ----------------------------
+# Prompt for Dry-Run or Real Encryption
+# ----------------------------
+do {
+    $DryRunInput = Read-Host "Do you want to run a dry run? (Y/N)"
+} while ($DryRunInput -notmatch '^[YyNn]$')
+
+$DryRun = if ($DryRunInput -match '^[Yy]$') { $true } else { $false }
+
+if ($DryRun) {
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN mode enabled. No drives will actually be encrypted.`n"
+} else {
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN disabled. Encryption will be performed.`n"
+}
 
 # ----------------------------
 # Identify eligible data drives (only drives with letters, exclude OS drive)
@@ -86,16 +99,14 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
 
     try {
         # ----------------------------
+        # Add password protector first
+        # ----------------------------
+        $Protector = Add-BitLockerKeyProtector -MountPoint $DriveLetter -Password $SecurePassword -ErrorAction Stop
+
+        # ----------------------------
         # Enable BitLocker
         # ----------------------------
-        Enable-BitLocker `
-            -MountPoint $DriveLetter `
-            -PasswordProtector `
-            -Password $SecurePassword `
-            -UsedSpaceOnly `
-            -EncryptionMethod XtsAes256
-
-        Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
+        Enable-BitLocker -MountPoint $DriveLetter -PasswordProtector -UsedSpaceOnly -EncryptionMethod XtsAes256
 
         # ----------------------------
         # Track encryption progress
@@ -111,12 +122,30 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
         Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption complete for $DriveLetter"
 
         # ----------------------------
-        # Export recovery key to Desktop
+        # Enable auto-unlock for non-OS drives
         # ----------------------------
-        $RecoveryProtector = (Get-BitLockerVolume -MountPoint $DriveLetter).KeyProtector |
-                             Where-Object { $_.KeyProtectorType -eq "RecoveryPassword" }
+        if ($DriveLetter -ne "C:") {
+            try {
+                Enable-BitLockerAutoUnlock -MountPoint $DriveLetter
+            } catch {
+                Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Warning: Could not enable auto-unlock on $DriveLetter. $_"
+            }
+        }
+
+        # ----------------------------
+        # Wait until recovery key exists
+        # ----------------------------
+        do {
+            Start-Sleep -Seconds 2
+            $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
+            $RecoveryProtector = $CurrentVolume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
+        } while (-not $RecoveryProtector)
 
         $RecoveryKey = $RecoveryProtector.RecoveryPassword
+
+        # ----------------------------
+        # Save recovery key to Desktop
+        # ----------------------------
         $RecoveryFileName = "${DriveLetter} DriveBitLocker Recovery key ($RecoveryKey).txt"
         $RecoveryFilePath = Join-Path $DesktopPath $RecoveryFileName
         "BitLocker Recovery Key: $RecoveryKey" | Out-File -FilePath $RecoveryFilePath -Encoding UTF8
