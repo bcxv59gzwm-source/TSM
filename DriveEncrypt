@@ -1,24 +1,22 @@
 # ============================
-# BitLocker Script (2016+ Safe, Drive-Letter Only, 30-Min Pause)
+# BitLocker Script (2016+ Safe, Desktop Output)
 # ============================
 
 # ----------------------------
 # Configuration
 # ----------------------------
 $SerialNumber = "YOUR_SERIAL_HERE"
-$DesktopPath = [Environment]::GetFolderPath("Desktop")
 $PauseMinutesBetweenDrives = 30       # minutes pause between drives
 $ProgressInterval = 5                  # seconds for live encryption progress
 $DryRun = $true                        # $true = preview only, $false = encrypt
 
 # ----------------------------
-# Paths
+# Desktop path for both CSV and recovery keys
 # ----------------------------
-$SerialFolder = Join-Path $DesktopPath $SerialNumber
-New-Item -ItemType Directory -Path $SerialFolder -Force | Out-Null
-$CSVLogPath = Join-Path $SerialFolder "BitLocker_ActivityLog.csv"
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
 
-# Initialize CSV log if it doesn't exist
+# Activity log CSV
+$CSVLogPath = Join-Path $DesktopPath "BitLocker_ActivityLog.csv"
 if (-not (Test-Path $CSVLogPath)) {
     "DriveLetter,VolumeLabel,SizeGB,DateTime,Status,RecoveryKey" | Out-File -FilePath $CSVLogPath -Encoding UTF8
 }
@@ -26,7 +24,8 @@ if (-not (Test-Path $CSVLogPath)) {
 # ----------------------------
 # BitLocker password
 # ----------------------------
-$PlainPassword  = "B1T$SerialNumber" + "L0K3r"
+# Use concatenation to avoid variable parsing errors
+$PlainPassword = "B1T" + $SerialNumber + "L0K3r"
 $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
 
 # ----------------------------
@@ -81,7 +80,7 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
         $RecoveryKeyPlaceholder = "DRY-RUN-RECOVERY-KEY"
         $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Completed,$RecoveryKeyPlaceholder"
         Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: Would start encryption and log: $LogEntry"
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: Would save recovery key file: $SerialFolder\$DriveLetter DriveBitLocker Recovery key ($RecoveryKeyPlaceholder).txt`n"
+        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: Would save recovery key file: $DesktopPath\$DriveLetter DriveBitLocker Recovery key ($RecoveryKeyPlaceholder).txt`n"
         continue
     }
 
@@ -106,25 +105,25 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
             Start-Sleep -Seconds $ProgressInterval
             $CurrentVolume = Get-BitLockerVolume -MountPoint $DriveLetter
             $Percent = if ($CurrentVolume.PercentEncrypted) { $CurrentVolume.PercentEncrypted } else { 0 }
-            Write-Host ("Drive $DriveLetter: $Percent% encrypted") -NoNewline
+            Write-Host ("Drive ${DriveLetter}: $Percent% encrypted") -NoNewline
             Write-Host "`r" -NoNewline
         } while ($CurrentVolume.VolumeStatus -ne "FullyEncrypted")
         Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - [$DriveCounter] Encryption complete for $DriveLetter"
 
         # ----------------------------
-        # Export recovery key
+        # Export recovery key to Desktop
         # ----------------------------
         $RecoveryProtector = (Get-BitLockerVolume -MountPoint $DriveLetter).KeyProtector |
                              Where-Object { $_.KeyProtectorType -eq "RecoveryPassword" }
 
         $RecoveryKey = $RecoveryProtector.RecoveryPassword
-        $FileName = "$DriveLetter DriveBitLocker Recovery key ($RecoveryKey).txt"
-        $FilePath = Join-Path $SerialFolder $FileName
-        "BitLocker Recovery Key: $RecoveryKey" | Out-File -FilePath $FilePath -Encoding UTF8
-        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Recovery key saved to: $FilePath"
+        $RecoveryFileName = "${DriveLetter} DriveBitLocker Recovery key ($RecoveryKey).txt"
+        $RecoveryFilePath = Join-Path $DesktopPath $RecoveryFileName
+        "BitLocker Recovery Key: $RecoveryKey" | Out-File -FilePath $RecoveryFilePath -Encoding UTF8
+        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Recovery key saved to: $RecoveryFilePath"
 
         # ----------------------------
-        # Log activity to CSV
+        # Log activity to CSV on Desktop
         # ----------------------------
         $LogEntry = "$DriveLetter,$VolumeLabel,$([math]::Round($TargetVolume.Capacity/1GB,2)),$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),Completed,$RecoveryKey"
         Add-Content -Path $CSVLogPath -Value $LogEntry
