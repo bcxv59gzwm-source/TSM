@@ -1,14 +1,15 @@
 # ---------------------------------------------
 # Script: Encrypt All Drives Except C: (Server 2016)
 # Logs activity and recovery keys to Desktop
-# Adds automation switch, 30-minute delay, and CSV recovery key log
+# Adds automation switch and 30-minute delay
+# Fully non-interactive (no password prompts)
 # ---------------------------------------------
 
 param (
     [switch]$Auto  # Use -Auto for full automation, otherwise stops after first drive
 )
 
-# Set up log file on Desktop
+# Set up log file and CSV on Desktop
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $LogFile = Join-Path $DesktopPath "DriveEncryptionLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $CSVFile = Join-Path $DesktopPath "RecoveryKeys_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
@@ -27,7 +28,7 @@ function Write-Log {
 
 Write-Log "Starting encryption script..."
 
-# Get all fixed drives except C:
+# Get all fixed drives except C: that are not fully encrypted
 $drives = Get-BitLockerVolume | Where-Object { $_.MountPoint -ne "C:" -and $_.VolumeStatus -ne "FullyEncrypted" }
 
 if ($drives.Count -eq 0) {
@@ -40,23 +41,26 @@ foreach ($drive in $drives) {
     Write-Log "Processing drive $mount..."
 
     try {
-        # Add a recovery password protector
-        $RecoveryKey = (Add-BitLockerKeyProtector -MountPoint $mount -RecoveryPasswordProtector).RecoveryPassword
+        # Add a recovery password protector (non-interactive)
+        $Protector = Add-BitLockerKeyProtector -MountPoint $mount -RecoveryPasswordProtector
+
+        # Extract recovery key for logging
+        $RecoveryKey = $Protector.RecoveryPassword
         Write-Log "Recovery key for $mount: $RecoveryKey"
 
         # Save recovery key to CSV
         $csvLine = "$mount,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         Add-Content -Path $CSVFile -Value $csvLine
 
-        # Enable encryption
-        Enable-BitLocker -MountPoint $mount -EncryptionMethod XtsAes256 -PasswordProtector $RecoveryKey -UsedSpaceOnly -Verbose
+        # Enable BitLocker using the existing protector
+        Enable-BitLocker -MountPoint $mount -EncryptionMethod XtsAes256 -UsedSpaceOnly -KeyProtectorId $Protector.KeyProtectorId -Verbose
         Write-Log "Encryption started on $mount"
     }
     catch {
         Write-Log "ERROR encrypting $mount: $_" "ERROR"
     }
 
-    # Check automation switch
+    # Automation switch
     if ($Auto) {
         Write-Log "Automation enabled. Waiting 30 minutes before next drive..."
         Start-Sleep -Seconds (30 * 60)  # 30-minute delay
