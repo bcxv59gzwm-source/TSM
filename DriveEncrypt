@@ -1,29 +1,17 @@
 # ============================================
-# BitLocker Encryption Script for Hyper-V Hosts
-# Server 2016+ Compatible
-# Encrypts all drives except OS (C:)
-# Internal Dry-Run Prompt Included
+# Server 2016 BitLocker Hybrid Script - All Data Drives
+# Encrypts all drives except OS (C:) with recovery key
+# Prompts once at the end for manual password unlock
 # ============================================
 
 # ----------------------------
 # Configuration
 # ----------------------------
 $ProgressInterval = 5                # Seconds between progress updates
-$PauseMinutesBetweenDrives = 30      # Optional pause between drives
+$PauseMinutesBetweenDrives = 0       # Optional pause between drives
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $CSVLogPath = Join-Path $DesktopPath "BitLocker_ActivityLog.csv"
-
-# ----------------------------
-# Internal Dry-Run Prompt
-# ----------------------------
-do {
-    $DryRunInput = Read-Host "Do you want to run a dry run? (Y/N)"
-} while ($DryRunInput -notmatch '^[YyNn]$')
-
-$DryRun = if ($DryRunInput -match '^[Yy]$') { $true } else { $false }
-
-if ($DryRun) { Write-Host "DRY-RUN enabled. No drives will actually be encrypted.`n" }
-else { Write-Host "DRY-RUN disabled. Encryption will be performed.`n" }
+$SerialNumber = "YOUR_SERIAL_HERE"   # Used for password unlock B1T<serial>L0K3r
 
 # ----------------------------
 # Prepare CSV log
@@ -33,7 +21,7 @@ if (-not (Test-Path $CSVLogPath)) {
 }
 
 # ----------------------------
-# Get all eligible data drives (with letters, skip OS)
+# Get all eligible data drives (skip OS)
 # ----------------------------
 $AllVolumes = Get-BitLockerVolume | Where-Object {
     $_.MountPoint -and $_.MountPoint -match '^[A-Z]:$' -and $_.MountPoint -ne "C:" -and $_.VolumeType -eq 'Data'
@@ -42,21 +30,6 @@ $AllVolumes = Get-BitLockerVolume | Where-Object {
 if (-not $AllVolumes) {
     Write-Host "No eligible data drives found."
     exit
-}
-
-# ----------------------------
-# Dry-Run Preview
-# ----------------------------
-if ($DryRun) {
-    Write-Host "DRY-RUN: The following drives would be encrypted:`n"
-    $AllVolumes | ForEach-Object {
-        [PSCustomObject]@{
-            DriveLetter = $_.MountPoint
-            VolumeLabel = if ($_.VolumeLabel) { $_.VolumeLabel } else { "N/A" }
-            SizeGB      = if ($_.Capacity) { "{0:N2}" -f ($_.Capacity / 1GB) } else { "Unknown" }
-        }
-    } | Format-Table -AutoSize
-    Write-Host "`n"
 }
 
 # ----------------------------
@@ -72,14 +45,9 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object MountPoint) {
 
     Write-Host "[$DriveCounter] Selected drive: $DriveLetter ($VolumeLabel)"
 
-    if ($DryRun) {
-        Write-Host "DRY-RUN: Would encrypt $DriveLetter and save recovery key & log.`n"
-        continue
-    }
-
     try {
         # ----------------------------
-        # Step 1: Enable BitLocker with recovery key
+        # Enable BitLocker with recovery key
         # ----------------------------
         Enable-BitLocker -MountPoint $DriveLetter -UsedSpaceOnly -EncryptionMethod XtsAes256
 
@@ -121,9 +89,24 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object MountPoint) {
     # ----------------------------
     # Optional pause before next drive
     # ----------------------------
-    $PauseSeconds = $PauseMinutesBetweenDrives * 60
-    Write-Host "Pausing $PauseMinutesBetweenDrives minutes before next drive..."
-    Start-Sleep -Seconds $PauseSeconds
+    if ($PauseMinutesBetweenDrives -gt 0) {
+        $PauseSeconds = $PauseMinutesBetweenDrives * 60
+        Write-Host "Pausing $PauseMinutesBetweenDrives minutes before next drive..."
+        Start-Sleep -Seconds $PauseSeconds
+    }
 }
 
-Write-Host "Script finished. Activity log: $CSVLogPath"
+# ----------------------------
+# Manual Password Unlock Instructions (Prompted Once)
+# ----------------------------
+Write-Host "`n====================================================================="
+Write-Host "SERVER 2016 LIMITATION: Password unlock for data drives must be added manually."
+Write-Host "To add a password protector to all drives, run this command once for each encrypted drive:"
+Write-Host "`tAdd-BitLockerKeyProtector -MountPoint <DriveLetter> -PasswordProtector"
+Write-Host "Enter the password: B1T$SerialNumberL0K3r"
+Write-Host "Example for D: drive: Add-BitLockerKeyProtector -MountPoint D: -PasswordProtector"
+Write-Host "Repeat for all drives listed above."
+Write-Host "====================================================================="
+Read-Host "Press ENTER once you have completed adding password protectors manually..."
+
+Write-Host "`nScript finished. Activity log: $CSVLogPath"
