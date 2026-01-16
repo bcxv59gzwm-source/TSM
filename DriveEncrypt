@@ -1,5 +1,5 @@
 # ============================
-# BitLocker Script (2016+ Compatible)
+# BitLocker Script (2016+ Safe, Drive-Letter Only, 30-Min Pause)
 # ============================
 
 # ----------------------------
@@ -7,10 +7,9 @@
 # ----------------------------
 $SerialNumber = "YOUR_SERIAL_HERE"
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
-$PauseBetweenDrives = 10           # seconds
-$ProgressInterval = 5              # seconds
-
-$DryRun = $true  # Set to $true to preview drives without encrypting, $false to run live
+$PauseMinutesBetweenDrives = 30       # minutes pause between drives
+$ProgressInterval = 5                  # seconds for live encryption progress
+$DryRun = $true                        # $true = preview only, $false = encrypt
 
 # ----------------------------
 # Paths
@@ -27,13 +26,19 @@ if (-not (Test-Path $CSVLogPath)) {
 # ----------------------------
 # BitLocker password
 # ----------------------------
-$PlainPassword  = "$SerialNumber" + ""
+$PlainPassword  = "B1T$SerialNumber" + "L0K3r"
 $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
 
 # ----------------------------
-# Identify eligible data drives (exclude OS drive)
+# Identify eligible data drives (only drives with letters, exclude OS drive)
 # ----------------------------
-$AllVolumes = Get-BitLockerVolume | Where-Object { $_.MountPoint -and $_.VolumeType -eq 'Data' -and $_.MountPoint -ne "C:" }
+$AllVolumes = Get-BitLockerVolume |
+    Where-Object { 
+        $_.MountPoint -and
+        $_.MountPoint -match '^[A-Z]:$' -and
+        $_.MountPoint -ne "C:" -and
+        $_.VolumeType -eq 'Data'
+    }
 
 if (-not $AllVolumes) {
     Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - No eligible data drives found."
@@ -41,24 +46,20 @@ if (-not $AllVolumes) {
 }
 
 # ----------------------------
-# Dry-Run Preview Table (2016-safe)
+# Dry-Run Preview Table
 # ----------------------------
 if ($DryRun) {
     Write-Host "`n$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - DRY-RUN: The following drives would be encrypted:`n"
 
-    $PreviewTable = @()
-    foreach ($vol in $AllVolumes) {
-        if ($vol -and $vol.MountPoint -and $vol.VolumeType -eq 'Data') {
-            $PreviewTable += [PSCustomObject]@{
-                DriveLetter = $vol.MountPoint
-                VolumeLabel = if ($vol.VolumeLabel) { $vol.VolumeLabel } else { "N/A" }
-                SizeGB      = if ($vol.Capacity) { "{0:N2}" -f ($vol.Capacity / 1GB) } else { "Unknown" }
-                Status      = $vol.VolumeStatus
-            }
+    $PreviewTable = $AllVolumes | ForEach-Object {
+        [PSCustomObject]@{
+            DriveLetter = $_.MountPoint
+            VolumeLabel = if ($_.VolumeLabel) { $_.VolumeLabel } else { "N/A" }
+            SizeGB      = if ($_.Capacity) { "{0:N2}" -f ($_.Capacity / 1GB) } else { "Unknown" }
+            Status      = $_.VolumeStatus
         }
-    }
+    } | Sort-Object @{Expression="DriveLetter";Ascending=$true}, @{Expression="SizeGB";Descending=$true}
 
-    $PreviewTable = $PreviewTable | Sort-Object @{Expression="DriveLetter";Ascending=$true}, @{Expression="SizeGB";Descending=$true}
     $PreviewTable | Format-Table -AutoSize
     Write-Host "`n"
 }
@@ -68,7 +69,7 @@ if ($DryRun) {
 # ----------------------------
 $DriveCounter = 0
 
-foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";Ascending=$true}, @{Expression="Capacity";Descending=$true}) {
+foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";Ascending=$true}) {
 
     $DriveCounter++
     $DriveLetter = $TargetVolume.MountPoint
@@ -138,8 +139,9 @@ foreach ($TargetVolume in $AllVolumes | Sort-Object @{Expression="MountPoint";As
     # ----------------------------
     # Pause before next drive
     # ----------------------------
-    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Pausing $PauseBetweenDrives seconds before next drive..."
-    Start-Sleep -Seconds $PauseBetweenDrives
+    $PauseSeconds = $PauseMinutesBetweenDrives * 60
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Pausing $PauseMinutesBetweenDrives minutes ($PauseSeconds seconds) before next drive..."
+    Start-Sleep -Seconds $PauseSeconds
 }
 
 Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Script finished. Activity log: $CSVLogPath"
