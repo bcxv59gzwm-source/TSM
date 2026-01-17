@@ -1,0 +1,4 @@
+$BL = Get-BitLockerVolume -MountPoint D:
+foreach ($KP in $BL.KeyProtector) {
+    Remove-BitLockerKeyProtector -MountPoint D: -KeyProtectorId $KP.KeyProtectorId
+}
