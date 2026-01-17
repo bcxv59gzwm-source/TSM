@@ -1,2 +1,111 @@
-$password = Read-Host -AsSecureString -Prompt "Enter encryption password"
-Enable-BitLocker -MountPoint "E:" -EncryptionMethod XtsAes256 -PasswordProtector -Password $password
+# -------------------------------------------------
+# Hardened BitLocker Encryption Script
+# Server 2016 / PowerShell ISE Compatible
+# -------------------------------------------------
+
+$OSDrive = "C:"
+$DelaySeconds = 30 * 60
+$EventSource = "BitLockerAutomation"
+
+# Ensure event source exists
+if (-not [System.Diagnostics.EventLog]::SourceExists($EventSource)) {
+    New-EventLog -LogName Application -Source $EventSource
+}
+
+# Desktop CSV
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$CsvPath = Join-Path $DesktopPath "BitLocker_Encryption_Log_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+"Drive,RecoveryKey,DateTime,Status" | Out-File -FilePath $CsvPath -Encoding UTF8
+
+function Write-CsvLog {
+    param ($Drive, $RecoveryKey, $Status)
+    $line = "$Drive,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status"
+    Add-Content -Path $CsvPath -Value $line
+    Write-EventLog -LogName Application -Source $EventSource -EntryType Information -EventId 1000 -Message $line
+    Write-Host $line
+}
+
+# Discover eligible drives
+$Drives = Get-WmiObject Win32_LogicalDisk | Where-Object {
+    $_.DriveType -eq 3 -and $_.DeviceID -ne $OSDrive
+}
+
+if (-not $Drives) {
+    Write-Host "No eligible drives found. Exiting."
+    exit
+}
+
+# -----------------------------
+# Pre-run summary
+# -----------------------------
+Write-Host ""
+Write-Host "PRE-RUN SUMMARY" -ForegroundColor Cyan
+Write-Host "OS Drive (excluded): C:"
+Write-Host "Delay between drives: 30 minutes"
+Write-Host "Drives eligible for encryption:"
+$Drives | ForEach-Object { Write-Host " - $($_.DeviceID)" }
+Write-Host ""
+
+# -----------------------------
+# Dry-run prompt
+# -----------------------------
+$DryRun = $true
+if ((Read-Host "Run in DRY RUN mode? (Y/N)") -match '^[Nn]$') {
+    $DryRun = $false
+    $Password = Read-Host -AsSecureString -Prompt "Enter BitLocker encryption password"
+}
+
+if ($DryRun) {
+    Write-CsvLog "ALL" "N/A" "Dry run selected"
+}
+
+# -----------------------------
+# Process drives
+# -----------------------------
+foreach ($Drive in $Drives) {
+    $MountPoint = $Drive.DeviceID
+
+    # Safety check
+    if ($MountPoint -eq "C:") { continue }
+
+    # Skip already encrypted volumes
+    $BL = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction SilentlyContinue
+    if ($BL -and $BL.VolumeStatus -eq "FullyEncrypted") {
+        Write-CsvLog $MountPoint "N/A" "Skipped - already encrypted"
+        continue
+    }
+
+    Write-Host ""
+    Write-Host "Processing $MountPoint..."
+
+    if ($DryRun) {
+        Write-CsvLog $MountPoint "N/A" "Dry run - no action taken"
+        continue
+    }
+
+    try {
+        # Add shared password protector
+        Add-BitLockerKeyProtector -MountPoint $MountPoint -PasswordProtector -Password $Password | Out-Null
+
+        # Add recovery key
+        $Recovery = Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector
+        $RecoveryKey = $Recovery.RecoveryPassword
+
+        # Enable BitLocker (safe Server 2016 call)
+        Enable-BitLocker -MountPoint $MountPoint
+
+        Write-CsvLog $MountPoint $RecoveryKey "Encryption started"
+
+        Write-Host "Waiting 30 minutes before next drive..." -ForegroundColor Cyan
+        Start-Sleep -Seconds $DelaySeconds
+    }
+    catch {
+        Write-CsvLog $MountPoint "N/A" "ERROR - stopping run: $_"
+        throw
+    }
+}
+
+Write-Host ""
+Write-Host "Encryption process completed."
+Write-Host "CSV log saved to:"
+Write-Host $CsvPath
