@@ -1,0 +1,58 @@
+# -------------------------------------------------
+# BitLocker Cleanup Script for Non-OS Drives
+# Removes leftover password and recovery protectors
+# Logs all removals to CSV on Desktop
+# Server 2016 / PowerShell ISE Compatible
+# -------------------------------------------------
+
+$OSDrive = "C:"
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$CsvPath = Join-Path $DesktopPath "BitLocker_Cleanup_Log_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+
+"Drive,RemovedProtectorType,KeyProtectorId,DateTime,Status" | Out-File -FilePath $CsvPath -Encoding UTF8
+
+function Write-CsvLog {
+    param (
+        [string]$Drive,
+        [string]$ProtectorType,
+        [string]$KeyId,
+        [string]$Status
+    )
+    $line = "$Drive,$ProtectorType,$KeyId,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status"
+    Add-Content -Path $CsvPath -Value $line
+    Write-Host $line
+}
+
+# Discover all fixed drives except C:
+$Drives = Get-BitLockerVolume | Where-Object { $_.MountPoint -ne $OSDrive }
+
+foreach ($Drive in $Drives) {
+    $MountPoint = $Drive.MountPoint
+    Write-Host ""
+    Write-Host "Processing $MountPoint for cleanup..."
+
+    try {
+        foreach ($KP in $Drive.KeyProtector) {
+
+            # Remove password protectors
+            if ($KP.KeyProtectorType -eq "Password") {
+                Remove-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $KP.KeyProtectorId
+                Write-CsvLog -Drive $MountPoint -ProtectorType "Password" -KeyId $KP.KeyProtectorId -Status "Removed"
+            }
+
+            # Remove recovery protectors
+            if ($KP.KeyProtectorType -eq "RecoveryPassword") {
+                Remove-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $KP.KeyProtectorId
+                Write-CsvLog -Drive $MountPoint -ProtectorType "RecoveryPassword" -KeyId $KP.KeyProtectorId -Status "Removed"
+            }
+        }
+    }
+    catch {
+        Write-CsvLog -Drive $MountPoint -ProtectorType "N/A" -KeyId "N/A" -Status "ERROR: $_"
+    }
+}
+
+Write-Host ""
+Write-Host "Cleanup completed."
+Write-Host "CSV log saved to:"
+Write-Host $CsvPath
