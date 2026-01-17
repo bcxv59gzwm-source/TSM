@@ -1,6 +1,6 @@
 # -------------------------------------------------
-# BitLocker Automation Script (Server 2016)
-# Fully handles existing protectors, partial encryptions
+# BitLocker Automation Script (Server 2016 Safe)
+# Fully avoids Add-PasswordProtectorInternal errors
 # Includes pre-run summary, dry-run, 30-min delay, CSV logging
 # -------------------------------------------------
 
@@ -45,7 +45,7 @@ $DryRunChoice = Read-Host "Run in DRY RUN mode? (Y/N)"
 $IsDryRun = $true
 if ($DryRunChoice -match '^[Nn]$') {
     $IsDryRun = $false
-    $Password = Read-Host -AsSecureString -Prompt "Enter encryption password"
+    $Password = Read-Host -AsSecureString -Prompt "Enter BitLocker encryption password"
 }
 
 if ($IsDryRun) {
@@ -87,26 +87,15 @@ foreach ($Drive in $Drives) {
             Write-Host "$MountPoint fully decrypted."
         }
 
-        # Add shared password protector (if none exists)
-        $BL = Get-BitLockerVolume -MountPoint $MountPoint
-        $ExistingPassword = $BL.KeyProtector | Where-Object { $_.KeyProtectorType -eq "Password" }
-        if (-not $ExistingPassword) {
-            Add-BitLockerKeyProtector -MountPoint $MountPoint -PasswordProtector -Password $Password
-            Write-Host "Password protector added."
-        } else {
-            Write-Host "Existing password protector detected - reusing it."
-        }
-
-        # SHORT PAUSE and refresh before adding recovery key
+        # SHORT PAUSE to let system settle
         Start-Sleep -Seconds 5
-        $BL = Get-BitLockerVolume -MountPoint $MountPoint
 
-        # Add recovery key
+        # Add recovery key first (Server 2016-safe)
         $RecoveryProtector = Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector
         $RecoveryKey = $RecoveryProtector.RecoveryPassword
         Write-Host "Recovery key added: $RecoveryKey"
 
-        # Enable BitLocker
+        # Enable BitLocker with password protector (never pre-add password)
         Enable-BitLocker -MountPoint $MountPoint -PasswordProtector -Password $Password
         Write-CsvLog $MountPoint $RecoveryKey "Encryption started"
 
