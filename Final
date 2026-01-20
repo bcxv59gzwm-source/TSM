@@ -135,23 +135,5 @@ Write-Host ""
 Write-Host "Adding deterministic unlock password to data drives..."
 Write-Host "Password format: B1T<SERIAL>L0K3r"
 
-foreach ($Drive in $Drives) {
-    $MountPoint = $Drive.MountPoint
 
-    try {
-        # Refresh BitLocker state
-        $BL = Get-BitLockerVolume -MountPoint $MountPoint
-
-        # Add unlock password protector
-        Add-BitLockerKeyProtector -MountPoint $MountPoint -PasswordProtector -Password $UnlockPassword | Out-Null
-        Write-CsvLog $MountPoint "N/A" "Unlock password protector added"
-
-    } catch {
-        Write-CsvLog $MountPoint "N/A" "ERROR adding unlock password: $_"
-        throw
-    }
-}
-
-Write-Host ""
-Write-Host "Encryption and unlock password configuration completed."
 Write-Host "CSV log saved to: $CsvPath"
