@@ -1,0 +1,156 @@
+# =================================================
+# BitLocker Sequential Encryption Script
+# Windows Server 2016 Safe
+# =================================================
+
+$OSDrive = "C:"
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$CsvPath = Join-Path $DesktopPath "BitLocker_Log_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+$DelaySeconds = 30 * 60
+
+"Drive,RecoveryKey,DateTime,Status" | Out-File -FilePath $CsvPath -Encoding UTF8
+
+function Write-CsvLog {
+    param ($Drive, $RecoveryKey, $Status)
+    $line = "$Drive,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status"
+    Add-Content -Path $CsvPath -Value $line
+    Write-Host $line
+}
+
+function Wait-EncryptionComplete {
+    param ($MountPoint)
+    Write-Host "Waiting for $MountPoint encryption to complete..."
+    do {
+        $BL = Get-BitLockerVolume -MountPoint $MountPoint
+        Write-Host "  $MountPoint : $($BL.EncryptionPercentage)%"
+        Start-Sleep -Seconds 30
+    } while ($BL.VolumeStatus -eq "EncryptionInProgress")
+    Write-Host "$MountPoint encryption completed."
+}
+
+# -------------------------------------------------
+# Discover drives
+# -------------------------------------------------
+$Drives = Get-BitLockerVolume | Where-Object {
+    $_.MountPoint -ne $OSDrive -and $_.MountPoint
+}
+
+if (-not $Drives) {
+    Write-Host "No data drives found. Exiting."
+    exit
+}
+
+# -------------------------------------------------
+# Pre-run summary
+# -------------------------------------------------
+Write-Host ""
+Write-Host "PRE-RUN SUMMARY" -ForegroundColor Cyan
+Write-Host "OS Drive excluded: C:"
+Write-Host "Drives to be encrypted:"
+$Drives | ForEach-Object { Write-Host " - $($_.MountPoint)" }
+Write-Host "Used-space-only encryption: ENABLED"
+Write-Host "Auto-unlock: ENABLED"
+Write-Host ""
+
+# -------------------------------------------------
+# Dry run prompt
+# -------------------------------------------------
+$DryRun = $true
+$Choice = Read-Host "Run in DRY RUN mode? (Y/N)"
+if ($Choice -match '^[Nn]$') {
+    $DryRun = $false
+    $Password = Read-Host -AsSecureString "Enter BitLocker encryption password"
+}
+
+if ($DryRun) {
+    Write-CsvLog "ALL" "N/A" "Dry run selected"
+}
+
+# -------------------------------------------------
+# Encrypt drives sequentially
+# -------------------------------------------------
+foreach ($Drive in $Drives) {
+    $MountPoint = $Drive.MountPoint
+    Write-Host ""
+    Write-Host "Processing $MountPoint"
+
+    if ($DryRun) {
+        Write-CsvLog $MountPoint "N/A" "Dry run - no action taken"
+        continue
+    }
+
+    try {
+        # Remove existing protectors
+        foreach ($KP in (Get-BitLockerVolume -MountPoint $MountPoint).KeyProtector) {
+            Remove-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $KP.KeyProtectorId -ErrorAction SilentlyContinue
+        }
+
+        Write-CsvLog $MountPoint "N/A" "Existing key protectors removed"
+
+        Start-Sleep -Seconds 5
+
+        # Add recovery protector FIRST
+        Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector | Out-Null
+
+        # Re-query to reliably retrieve recovery key
+        $RecoveryKey = (Get-BitLockerVolume -MountPoint $MountPoint).KeyProtector |
+            Where-Object { $_.KeyProtectorType -eq "RecoveryPassword" } |
+            Select-Object -ExpandProperty RecoveryPassword
+
+        Write-Host "Recovery key: $RecoveryKey"
+
+        # Enable BitLocker (used space only)
+        Enable-BitLocker `
+            -MountPoint $MountPoint `
+            -PasswordProtector `
+            -Password $Password `
+            -UsedSpaceOnly
+
+        Write-CsvLog $MountPoint $RecoveryKey "Encryption started"
+
+        # Wait until encryption completes
+        Wait-EncryptionComplete -MountPoint $MountPoint
+
+        # Enable auto-unlock
+        Enable-BitLockerAutoUnlock -MountPoint $MountPoint
+        Write-CsvLog $MountPoint $RecoveryKey "Auto-unlock enabled"
+
+        Write-Host "Waiting 30 minutes before next drive..."
+        Start-Sleep -Seconds $DelaySeconds
+
+    } catch {
+        Write-CsvLog $MountPoint "N/A" "ERROR: $_"
+        throw
+    }
+}
+
+# -------------------------------------------------
+# Add deterministic unlock password
+# Format: B1T<SERIAL>L0K3r
+# -------------------------------------------------
+$Serial = (Get-WmiObject Win32_BIOS).SerialNumber.Trim()
+$UnlockPasswordPlain = "B1T$Serial" + "L0K3r"
+$UnlockPassword = ConvertTo-SecureString $UnlockPasswordPlain -AsPlainText -Force
+
+Write-Host ""
+Write-Host "Adding deterministic unlock password..."
+
+foreach ($Drive in $Drives) {
+    $MountPoint = $Drive.MountPoint
+    try {
+        Add-BitLockerKeyProtector `
+            -MountPoint $MountPoint `
+            -PasswordProtector `
+            -Password $UnlockPassword | Out-Null
+
+        Write-CsvLog $MountPoint "N/A" "Deterministic unlock password added"
+    } catch {
+        Write-CsvLog $MountPoint "N/A" "ERROR adding unlock password: $_"
+        throw
+    }
+}
+
+Write-Host ""
+Write-Host "BitLocker configuration completed successfully."
+Write-Host "CSV log saved to:"
+Write-Host $CsvPath
