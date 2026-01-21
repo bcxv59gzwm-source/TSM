@@ -1,7 +1,6 @@
 # =========================================================
 # BitLocker Two-Stage Encryption Script (Server 2016)
-# Stage 1: Encrypt C:
-# Stage 2: Encrypt remaining drives after reboot
+# Fully robust version with mount point checks
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -157,6 +156,10 @@ $Counter = 1
 
 foreach ($Drive in $Drives) {
     $MountPoint = $Drive.MountPoint
+
+    # Skip any drive with missing mount point
+    if (-not $MountPoint) { continue }
+
     Write-Host "`nProcessing drive $Counter of $TotalDrives: $MountPoint ..." -ForegroundColor Yellow
 
     # Enable BitLocker with password
