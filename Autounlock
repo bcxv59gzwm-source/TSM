@@ -104,25 +104,41 @@ foreach ($Drive in $Drives) {
         continue
     }
 
-    # Enable BitLocker (Used Space Only)
+    # -------------------------
+    # Step 1: Enable encryption with password protector only
+    # -------------------------
     Enable-BitLocker `
         -MountPoint $MountPoint `
-        -UsedSpaceOnly `
         -EncryptionMethod XtsAes256 `
+        -UsedSpaceOnly `
         -PasswordProtector `
-        -Password $SecurePassword `
+        -Password $SecurePassword
+
+    Write-CsvLog $MountPoint "PasswordProtector" "N/A" "N/A" "Encryption started with password"
+
+    # -------------------------
+    # Step 2: Add recovery password protector separately
+    # -------------------------
+    Add-BitLockerKeyProtector `
+        -MountPoint $MountPoint `
         -RecoveryPasswordProtector
 
-    Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption started"
+    Write-CsvLog $MountPoint "RecoveryPasswordProtector" "N/A" "N/A" "Recovery protector added"
 
+    # -------------------------
     # Wait until encryption finishes
+    # -------------------------
     Wait-ForEncryption -MountPoint $MountPoint
     Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption completed"
 
+    # -------------------------
     # Export protector IDs + recovery keys
+    # -------------------------
     Export-KeyProtectors -MountPoint $MountPoint
 
+    # -------------------------
     # Enable Auto-Unlock (non-C drives only)
+    # -------------------------
     $OSProtected = (Get-BitLockerVolume -MountPoint "C:").ProtectionStatus -eq "On"
 
     if ($MountPoint -ne "C:" -and $OSProtected) {
@@ -133,7 +149,9 @@ foreach ($Drive in $Drives) {
         Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock skipped"
     }
 
+    # -------------------------
     # Delay before next drive
+    # -------------------------
     Start-Sleep -Seconds $DelaySec
 }
 
