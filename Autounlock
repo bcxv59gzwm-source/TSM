@@ -1,6 +1,7 @@
 # =========================================================
-# BitLocker Two-Stage Encryption Script with Visual Console
-# Server 2016 / ISE Safe
+# BitLocker Two-Stage Encryption Script (Server 2016)
+# Stage 1: Encrypt C:
+# Stage 2: Encrypt all remaining drives
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -133,22 +134,27 @@ else {
 # =========================================================
 # Stage 2: Encrypt remaining drives
 # =========================================================
+
+# Fixed Stage 2 drive detection
 $Drives = Get-BitLockerVolume |
 Where-Object {
     $_.MountPoint -and
-    $_.VolumeType -eq "Fixed" -and
+    $_.MountPoint -ne "C:" -and
     $_.ProtectionStatus -ne "On"
 } |
 Sort-Object MountPoint
 
 if ($Drives.Count -eq 0) {
-    Write-Host "`nNo unencrypted drives detected. Script complete." -ForegroundColor Green
+    Write-Host "`nNo unencrypted drives detected for Stage 2. Either all drives are encrypted or they are not mounted." -ForegroundColor Yellow
     return
 }
 
+$TotalDrives = $Drives.Count
+$Counter = 1
+
 foreach ($Drive in $Drives) {
     $MountPoint = $Drive.MountPoint
-    Write-Host "`nProcessing $MountPoint..." -ForegroundColor Yellow
+    Write-Host "`nProcessing drive $Counter of $TotalDrives: $MountPoint ..." -ForegroundColor Yellow
 
     # Enable BitLocker with password
     Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector -Password $SecurePassword
@@ -169,6 +175,7 @@ foreach ($Drive in $Drives) {
     }
 
     Start-Sleep -Seconds $DelaySec
+    $Counter++
 }
 
 Write-CsvLog "ALL" "N/A" "N/A" "N/A" "Script completed"
