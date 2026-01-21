@@ -1,0 +1,146 @@
+# =========================================================
+# BitLocker Encryption Script with Conditional Auto-Unlock
+# Windows Server 2016 / PowerShell ISE Safe
+# =========================================================
+
+# -----------------------------
+# Globals
+# -----------------------------
+$Desktop  = [Environment]::GetFolderPath("Desktop")
+$CsvPath  = Join-Path $Desktop "BitLocker_Encryption_Log.csv"
+$DelaySec = 1800  # 30 minutes
+
+# -----------------------------
+# Prompt once for password
+# -----------------------------
+$SecurePassword = Read-Host -AsSecureString -Prompt "Enter BitLocker password for ALL drives"
+
+# -----------------------------
+# CSV Header
+# -----------------------------
+"Drive,ProtectorType,ProtectorId,RecoveryKey,DateTime,Status" |
+Out-File -FilePath $CsvPath -Encoding UTF8
+
+# -----------------------------
+# Logging Function
+# -----------------------------
+function Write-CsvLog {
+    param (
+        $Drive,
+        $ProtectorType,
+        $ProtectorId,
+        $RecoveryKey,
+        $Status
+    )
+
+    "$Drive,$ProtectorType,$ProtectorId,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status" |
+    Add-Content -Path $CsvPath
+}
+
+# -----------------------------
+# Wait for encryption to finish
+# -----------------------------
+function Wait-ForEncryption {
+    param ($MountPoint)
+
+    do {
+        Start-Sleep -Seconds 60
+        $State = (Get-BitLockerVolume -MountPoint $MountPoint).VolumeStatus
+    } while ($State -eq "EncryptionInProgress")
+}
+
+# -----------------------------
+# Export all key protector IDs
+# -----------------------------
+function Export-KeyProtectors {
+    param ($MountPoint)
+
+    $BL = Get-BitLockerVolume -MountPoint $MountPoint
+
+    foreach ($KP in $BL.KeyProtector) {
+
+        $Recovery = "N/A"
+        if ($KP.KeyProtectorType -eq "RecoveryPassword") {
+            $Recovery = $KP.RecoveryPassword
+        }
+
+        Write-CsvLog `
+            $MountPoint `
+            $KP.KeyProtectorType `
+            $KP.KeyProtectorId `
+            $Recovery `
+            "Protector exported"
+    }
+}
+
+# -----------------------------
+# Get fixed drives
+# C: first, then others
+# -----------------------------
+$Drives = Get-BitLockerVolume |
+Where-Object {
+    $_.VolumeType -eq "Fixed" -and $_.MountPoint
+} |
+Sort-Object @{ Expression = { $_.MountPoint -ne "C:" } }
+
+# -----------------------------
+# Main Loop
+# -----------------------------
+foreach ($Drive in $Drives) {
+
+    $MountPoint = $Drive.MountPoint
+    $BL = Get-BitLockerVolume -MountPoint $MountPoint
+
+    if ($BL.ProtectionStatus -eq "On") {
+        Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Already encrypted – skipped"
+        continue
+    }
+
+    # -------------------------
+    # Enable BitLocker
+    # -------------------------
+    Enable-BitLocker `
+        -MountPoint $MountPoint `
+        -UsedSpaceOnly `
+        -EncryptionMethod XtsAes256 `
+        -PasswordProtector `
+        -Password $SecurePassword `
+        -RecoveryPasswordProtector
+
+    Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption started"
+
+    # -------------------------
+    # Wait until complete
+    # -------------------------
+    Wait-ForEncryption -MountPoint $MountPoint
+    Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption completed"
+
+    # -------------------------
+    # Export IDs + recovery keys
+    # -------------------------
+    Export-KeyProtectors -MountPoint $MountPoint
+
+    # -------------------------
+    # Enable Auto-Unlock
+    # (non-C drives only, C must be protected)
+    # -------------------------
+    $OSProtected = (Get-BitLockerVolume -MountPoint "C:").ProtectionStatus -eq "On"
+
+    if ($MountPoint -ne "C:" -and $OSProtected) {
+        Enable-BitLockerAutoUnlock -MountPoint $MountPoint
+        Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock enabled"
+    }
+    else {
+        Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock skipped"
+    }
+
+    # -------------------------
+    # Delay before next drive
+    # -------------------------
+    Start-Sleep -Seconds $DelaySec
+}
+
+# -----------------------------
+# Completion marker
+# -----------------------------
+Write-CsvLog "ALL" "N/A" "N/A" "N/A" "Script completed"
