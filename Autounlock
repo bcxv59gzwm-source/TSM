@@ -1,7 +1,7 @@
 # =========================================================
 # BitLocker Two-Stage Encryption Script (Server 2016)
 # Stage 1: Encrypt C:
-# Stage 2: Encrypt all remaining drives
+# Stage 2: Encrypt remaining drives after reboot
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -135,7 +135,10 @@ else {
 # Stage 2: Encrypt remaining drives
 # =========================================================
 
-# Fixed Stage 2 drive detection
+# Refresh C: object for Stage 2
+$CDrive = Get-BitLockerVolume -MountPoint "C:"
+
+# Detect all non-C: drives that are mounted and not encrypted
 $Drives = Get-BitLockerVolume |
 Where-Object {
     $_.MountPoint -and
