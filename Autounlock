@@ -1,6 +1,6 @@
 # =========================================================
-# BitLocker Full Encryption Script (C: + Data Drives)
-# Server 2016 / ISE Safe / Reliable RecoveryKey + ProtectorID
+# BitLocker Two-Stage Encryption Script with Visual Console
+# Server 2016 / ISE Safe
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -27,10 +27,12 @@ if (-not $IsAdmin) {
 $SecurePassword = Read-Host -AsSecureString -Prompt "Enter BitLocker password for ALL drives"
 
 # -----------------------------
-# CSV Header
+# CSV Header (create if missing)
 # -----------------------------
-"Drive,ProtectorType,ProtectorId,RecoveryKey,DateTime,Status" |
-Out-File -FilePath $CsvPath -Encoding UTF8
+if (-not (Test-Path $CsvPath)) {
+    "Drive,ProtectorType,ProtectorId,RecoveryKey,DateTime,Status" |
+    Out-File -FilePath $CsvPath -Encoding UTF8
+}
 
 # -----------------------------
 # Logging Function
@@ -59,17 +61,13 @@ function Export-KeyProtectors {
     param ($MountPoint)
 
     Start-Sleep -Seconds 5
-
-    # Take a fresh snapshot of key protectors
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
     $KeyProtectors = $BL.KeyProtector
 
     foreach ($KP in $KeyProtectors) {
-        # Initialize
         $ProtectorId = if ($KP.KeyProtectorId) { $KP.KeyProtectorId.Guid } else { "N/A" }
         $Recovery = "N/A"
 
-        # Only wait for RecoveryPassword if this is a recovery protector
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
             $retry = 0
             while (-not $KP.RecoveryPassword -and $retry -lt 10) {
@@ -81,107 +79,97 @@ function Export-KeyProtectors {
             if ($KP.RecoveryPassword) { $Recovery = $KP.RecoveryPassword }
         }
 
-        # Write to CSV
         Write-CsvLog $MountPoint $KP.KeyProtectorType $ProtectorId $Recovery "Protector exported"
     }
 }
 
-# -----------------------------
-# Get drives (C: + Fixed)
-# -----------------------------
+# =========================================================
+# Stage detection
+# =========================================================
+$CDrive = Get-BitLockerVolume -MountPoint "C:"
+
+if ($CDrive.ProtectionStatus -ne "On") {
+
+    # -----------------------------
+    # Stage 1 Banner
+    # -----------------------------
+    Write-Host ""
+    Write-Host "==========================================" -ForegroundColor Cyan
+    Write-Host "          STAGE 1 – C: ENCRYPTION          " -ForegroundColor Cyan
+    Write-Host "==========================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # -----------------------------
+    # Stage 1: Encrypt C:
+    # -----------------------------
+    Write-Host "Encrypting C: drive..." -ForegroundColor Yellow
+    Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector -Password $SecurePassword
+    Write-CsvLog "C:" "PasswordProtector" "N/A" "N/A" "Encryption started with password"
+
+    Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector
+    Write-CsvLog "C:" "RecoveryPasswordProtector" "N/A" "N/A" "Recovery protector added"
+
+    Wait-ForEncryption -MountPoint "C:"
+    Write-CsvLog "C:" "N/A" "N/A" "N/A" "C: encryption completed"
+
+    Export-KeyProtectors -MountPoint "C:"
+
+    Write-Host ""
+    Write-Host "C: drive encryption completed. Please reboot the server before running the script again to encrypt remaining drives." -ForegroundColor Green
+    return
+}
+else {
+    # -----------------------------
+    # Stage 2 Banner
+    # -----------------------------
+    Write-Host ""
+    Write-Host "==========================================" -ForegroundColor Green
+    Write-Host "   STAGE 2 – REMAINING DRIVES ENCRYPTION   " -ForegroundColor Green
+    Write-Host "==========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "C: drive confirmed encrypted. Stage 2 now available." -ForegroundColor Green
+}
+
+# =========================================================
+# Stage 2: Encrypt remaining drives
+# =========================================================
 $Drives = Get-BitLockerVolume |
 Where-Object {
     $_.MountPoint -and
-    ($_.VolumeType -eq "OperatingSystem" -or $_.VolumeType -eq "Fixed")
+    $_.VolumeType -eq "Fixed" -and
+    $_.ProtectionStatus -ne "On"
 } |
-Sort-Object @{ Expression = { $_.MountPoint -ne "C:" } }
+Sort-Object MountPoint
 
-# -----------------------------
-# Pre-run summary
-# -----------------------------
-Write-Host "`nDrives to be encrypted:" -ForegroundColor Cyan
-$Drives | Select MountPoint, VolumeType | Format-Table
+if ($Drives.Count -eq 0) {
+    Write-Host "`nNo unencrypted drives detected. Script complete." -ForegroundColor Green
+    return
+}
 
-# -----------------------------
-# Main loop
-# -----------------------------
 foreach ($Drive in $Drives) {
-
     $MountPoint = $Drive.MountPoint
-    Write-Host "`nProcessing $MountPoint" -ForegroundColor Yellow
+    Write-Host "`nProcessing $MountPoint..." -ForegroundColor Yellow
 
-    $BL = Get-BitLockerVolume -MountPoint $MountPoint
-
-    if ($BL.ProtectionStatus -eq "On") {
-        Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Already encrypted – skipped"
-        continue
-    }
-
-    # -------------------------
-    # Step 1: Enable encryption with password protector only
-    # -------------------------
-    Enable-BitLocker `
-        -MountPoint $MountPoint `
-        -EncryptionMethod XtsAes256 `
-        -UsedSpaceOnly `
-        -PasswordProtector `
-        -Password $SecurePassword
-
+    # Enable BitLocker with password
+    Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector -Password $SecurePassword
     Write-CsvLog $MountPoint "PasswordProtector" "N/A" "N/A" "Encryption started with password"
 
-    # -------------------------
-    # Step 2: Add recovery password protector separately
-    # -------------------------
-    Add-BitLockerKeyProtector `
-        -MountPoint $MountPoint `
-        -RecoveryPasswordProtector
-
+    Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector
     Write-CsvLog $MountPoint "RecoveryPasswordProtector" "N/A" "N/A" "Recovery protector added"
 
-    # -------------------------
-    # Wait until encryption finishes
-    # -------------------------
     Wait-ForEncryption -MountPoint $MountPoint
     Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption completed"
 
-    # -------------------------
-    # Export protector IDs + recovery keys reliably
-    # -------------------------
     Export-KeyProtectors -MountPoint $MountPoint
 
-    # -------------------------
-    # STOP AFTER C: (manual reboot)
-    # -------------------------
-    if ($MountPoint -eq "C:") {
-        Write-Host "`nC: drive encryption and key protectors are configured." -ForegroundColor Green
-        Write-Host "A restart is recommended before encrypting other drives." -ForegroundColor Yellow
-        Write-Host "Press ENTER to exit the script and perform the restart..."
-        Read-Host
-        Write-Host "Exiting script. Re-run after reboot to continue with data drives." -ForegroundColor Cyan
-        return
-    }
-
-    # -------------------------
-    # Enable Auto-Unlock (non-C drives only)
-    # -------------------------
-    $OSProtected = (Get-BitLockerVolume -MountPoint "C:").ProtectionStatus -eq "On"
-
-    if ($MountPoint -ne "C:" -and $OSProtected) {
+    # Enable Auto-Unlock for non-C drives
+    if ($CDrive.ProtectionStatus -eq "On") {
         Enable-BitLockerAutoUnlock -MountPoint $MountPoint
         Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock enabled"
     }
-    else {
-        Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock skipped"
-    }
 
-    # -------------------------
-    # Delay before next drive
-    # -------------------------
     Start-Sleep -Seconds $DelaySec
 }
 
-# -----------------------------
-# Completion marker
-# -----------------------------
 Write-CsvLog "ALL" "N/A" "N/A" "N/A" "Script completed"
-Write-Host "`nBitLocker encryption process completed." -ForegroundColor Green
+Write-Host "`nBitLocker encryption process completed for all drives." -ForegroundColor Green
