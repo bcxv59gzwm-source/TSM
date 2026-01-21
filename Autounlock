@@ -1,6 +1,6 @@
 # =========================================================
 # BitLocker Full Encryption Script (C: + Data Drives)
-# Server 2016 / ISE Safe / Full RecoveryKey + ProtectorID
+# Server 2016 / ISE Safe / Reliable RecoveryKey + ProtectorID
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -53,55 +53,36 @@ function Wait-ForEncryption {
 }
 
 # -----------------------------
-# Export Key Protectors (RecoveryKey + KeyProtectorId reliably)
+# Export Key Protectors reliably
 # -----------------------------
 function Export-KeyProtectors {
     param ($MountPoint)
 
-    # Give BitLocker a few seconds to finalize keys
     Start-Sleep -Seconds 5
 
-    # Refresh BitLocker volume
+    # Take a fresh snapshot of key protectors
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
-
-    # Expand key protectors explicitly to get IDs
-    $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
+    $KeyProtectors = $BL.KeyProtector
 
     foreach ($KP in $KeyProtectors) {
+        # Initialize
+        $ProtectorId = if ($KP.KeyProtectorId) { $KP.KeyProtectorId.Guid } else { "N/A" }
         $Recovery = "N/A"
-        $ProtectorId = "N/A"
 
-        # Wait for KeyProtectorId to exist
-        $retry = 0
-        while (($KP.KeyProtectorId -eq $null) -and $retry -lt 10) {
-            Start-Sleep -Seconds 5
-            $BL = Get-BitLockerVolume -MountPoint $MountPoint
-            $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
-            $KP = $KeyProtectors | Where-Object { $_.KeyProtectorType -eq $KP.KeyProtectorType }
-            $retry++
-        }
-
-        if ($KP.KeyProtectorId) { $ProtectorId = $KP.KeyProtectorId.Guid }
-
+        # Only wait for RecoveryPassword if this is a recovery protector
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
-            # Wait until RecoveryPassword is populated
             $retry = 0
             while (-not $KP.RecoveryPassword -and $retry -lt 10) {
                 Start-Sleep -Seconds 5
                 $BL = Get-BitLockerVolume -MountPoint $MountPoint
-                $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
-                $KP = $KeyProtectors | Where-Object { $_.KeyProtectorId.Guid -eq $ProtectorId }
+                $KP = $BL.KeyProtector | Where-Object { $_.KeyProtectorId.Guid -eq $ProtectorId }
                 $retry++
             }
-            $Recovery = $KP.RecoveryPassword
+            if ($KP.RecoveryPassword) { $Recovery = $KP.RecoveryPassword }
         }
 
-        Write-CsvLog `
-            $MountPoint `
-            $KP.KeyProtectorType `
-            $ProtectorId `
-            $Recovery `
-            "Protector exported"
+        # Write to CSV
+        Write-CsvLog $MountPoint $KP.KeyProtectorType $ProtectorId $Recovery "Protector exported"
     }
 }
 
