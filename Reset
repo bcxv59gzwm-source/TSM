@@ -1,0 +1,11 @@
+$MountPoint = "C:"
+$PlainPassword = ""
+
+# Convert to SecureString
+$SecurePassword = ConvertTo-SecureString -String $PlainPassword -AsPlainText -Force
+
+# Add password protector first
+Add-BitLockerKeyProtector -MountPoint $MountPoint -PasswordProtector -Password $SecurePassword
+
+# Enable BitLocker using the existing protector
+Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -UsedSpaceOnly -Confirm:$false
