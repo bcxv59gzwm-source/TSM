@@ -1,6 +1,6 @@
 # =========================================================
 # BitLocker Full Encryption Script (C: + Data Drives)
-# Windows Server 2016 / PowerShell ISE Safe
+# Server 2016 / PowerShell ISE Safe / RecoveryKey + C: Pause
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -53,28 +53,44 @@ function Wait-ForEncryption {
 }
 
 # -----------------------------
-# Export Key Protectors
+# Export Key Protectors (with recovery key refresh)
 # -----------------------------
 function Export-KeyProtectors {
     param ($MountPoint)
+
+    # Give BitLocker a moment to finalize keys
+    Start-Sleep -Seconds 5
+
+    # Refresh BitLocker object
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
+
     foreach ($KP in $BL.KeyProtector) {
         $Recovery = "N/A"
+        $ProtectorId = $KP.KeyProtectorId.Guid
+
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
+            # Wait until RecoveryPassword is populated
+            $retry = 0
+            while (-not $KP.RecoveryPassword -and $retry -lt 10) {
+                Start-Sleep -Seconds 5
+                $BL = Get-BitLockerVolume -MountPoint $MountPoint
+                $KP = $BL.KeyProtector | Where-Object {$_.KeyProtectorId -eq $ProtectorId}
+                $retry++
+            }
             $Recovery = $KP.RecoveryPassword
         }
+
         Write-CsvLog `
             $MountPoint `
             $KP.KeyProtectorType `
-            $KP.KeyProtectorId `
+            $ProtectorId `
             $Recovery `
             "Protector exported"
     }
 }
 
 # -----------------------------
-# Get drives
-# Include C: (OperatingSystem) + Fixed data drives
+# Get drives (C: + Fixed)
 # -----------------------------
 $Drives = Get-BitLockerVolume |
 Where-Object {
@@ -135,6 +151,18 @@ foreach ($Drive in $Drives) {
     # Export protector IDs + recovery keys
     # -------------------------
     Export-KeyProtectors -MountPoint $MountPoint
+
+    # -------------------------
+    # STOP AFTER C: (manual reboot)
+    # -------------------------
+    if ($MountPoint -eq "C:") {
+        Write-Host "`nC: drive encryption and key protectors are configured." -ForegroundColor Green
+        Write-Host "A restart is recommended before encrypting other drives." -ForegroundColor Yellow
+        Write-Host "Press ENTER to exit the script and perform the restart..."
+        Read-Host
+        Write-Host "Exiting script. Re-run after reboot to continue with data drives." -ForegroundColor Cyan
+        return
+    }
 
     # -------------------------
     # Enable Auto-Unlock (non-C drives only)
