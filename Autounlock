@@ -1,7 +1,9 @@
 # =========================================================
-# BitLocker Encryption Script with Conditional Auto-Unlock
+# BitLocker Full Encryption Script (C: + Data Drives)
 # Windows Server 2016 / PowerShell ISE Safe
 # =========================================================
+
+$ErrorActionPreference = 'Stop'
 
 # -----------------------------
 # Globals
@@ -9,6 +11,15 @@
 $Desktop  = [Environment]::GetFolderPath("Desktop")
 $CsvPath  = Join-Path $Desktop "BitLocker_Encryption_Log.csv"
 $DelaySec = 1800  # 30 minutes
+
+# -----------------------------
+# Require Admin
+# -----------------------------
+if (-not ([Security.Principal.WindowsPrincipal]
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "Script must be run as Administrator"
+}
 
 # -----------------------------
 # Prompt once for password
@@ -25,20 +36,14 @@ Out-File -FilePath $CsvPath -Encoding UTF8
 # Logging Function
 # -----------------------------
 function Write-CsvLog {
-    param (
-        $Drive,
-        $ProtectorType,
-        $ProtectorId,
-        $RecoveryKey,
-        $Status
-    )
+    param ($Drive,$ProtectorType,$ProtectorId,$RecoveryKey,$Status)
 
     "$Drive,$ProtectorType,$ProtectorId,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status" |
     Add-Content -Path $CsvPath
 }
 
 # -----------------------------
-# Wait for encryption to finish
+# Wait for encryption completion
 # -----------------------------
 function Wait-ForEncryption {
     param ($MountPoint)
@@ -50,7 +55,7 @@ function Wait-ForEncryption {
 }
 
 # -----------------------------
-# Export all key protector IDs
+# Export Key Protectors
 # -----------------------------
 function Export-KeyProtectors {
     param ($MountPoint)
@@ -58,7 +63,6 @@ function Export-KeyProtectors {
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
 
     foreach ($KP in $BL.KeyProtector) {
-
         $Recovery = "N/A"
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
             $Recovery = $KP.RecoveryPassword
@@ -74,21 +78,30 @@ function Export-KeyProtectors {
 }
 
 # -----------------------------
-# Get fixed drives
-# C: first, then others
+# Get drives
+# Include C: (OperatingSystem) + Fixed
 # -----------------------------
 $Drives = Get-BitLockerVolume |
 Where-Object {
-    $_.VolumeType -eq "Fixed" -and $_.MountPoint
+    $_.MountPoint -and
+    ($_.VolumeType -eq "OperatingSystem" -or $_.VolumeType -eq "Fixed")
 } |
 Sort-Object @{ Expression = { $_.MountPoint -ne "C:" } }
 
 # -----------------------------
-# Main Loop
+# Pre-run summary
+# -----------------------------
+Write-Host "`nDrives to be encrypted:" -ForegroundColor Cyan
+$Drives | Select MountPoint, VolumeType | Format-Table
+
+# -----------------------------
+# Main loop
 # -----------------------------
 foreach ($Drive in $Drives) {
 
     $MountPoint = $Drive.MountPoint
+    Write-Host "`nProcessing $MountPoint" -ForegroundColor Yellow
+
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
 
     if ($BL.ProtectionStatus -eq "On") {
@@ -96,9 +109,7 @@ foreach ($Drive in $Drives) {
         continue
     }
 
-    # -------------------------
     # Enable BitLocker
-    # -------------------------
     Enable-BitLocker `
         -MountPoint $MountPoint `
         -UsedSpaceOnly `
@@ -109,21 +120,14 @@ foreach ($Drive in $Drives) {
 
     Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption started"
 
-    # -------------------------
-    # Wait until complete
-    # -------------------------
+    # Wait until encryption finishes
     Wait-ForEncryption -MountPoint $MountPoint
     Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption completed"
 
-    # -------------------------
-    # Export IDs + recovery keys
-    # -------------------------
+    # Export protector IDs + recovery keys
     Export-KeyProtectors -MountPoint $MountPoint
 
-    # -------------------------
-    # Enable Auto-Unlock
-    # (non-C drives only, C must be protected)
-    # -------------------------
+    # Enable Auto-Unlock (non-C drives only)
     $OSProtected = (Get-BitLockerVolume -MountPoint "C:").ProtectionStatus -eq "On"
 
     if ($MountPoint -ne "C:" -and $OSProtected) {
@@ -134,9 +138,7 @@ foreach ($Drive in $Drives) {
         Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Auto-unlock skipped"
     }
 
-    # -------------------------
     # Delay before next drive
-    # -------------------------
     Start-Sleep -Seconds $DelaySec
 }
 
@@ -144,3 +146,4 @@ foreach ($Drive in $Drives) {
 # Completion marker
 # -----------------------------
 Write-CsvLog "ALL" "N/A" "N/A" "N/A" "Script completed"
+Write-Host "`nBitLocker encryption process completed." -ForegroundColor Green
