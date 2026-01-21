@@ -15,10 +15,10 @@ $DelaySec = 1800  # 30 minutes
 # -----------------------------
 # Require Admin
 # -----------------------------
-if (-not ([Security.Principal.WindowsPrincipal]
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "Script must be run as Administrator"
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $IsAdmin) {
+    Write-Error "Script must be run as Administrator"
+    return
 }
 
 # -----------------------------
@@ -37,7 +37,6 @@ Out-File -FilePath $CsvPath -Encoding UTF8
 # -----------------------------
 function Write-CsvLog {
     param ($Drive,$ProtectorType,$ProtectorId,$RecoveryKey,$Status)
-
     "$Drive,$ProtectorType,$ProtectorId,$RecoveryKey,$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$Status" |
     Add-Content -Path $CsvPath
 }
@@ -47,7 +46,6 @@ function Write-CsvLog {
 # -----------------------------
 function Wait-ForEncryption {
     param ($MountPoint)
-
     do {
         Start-Sleep -Seconds 60
         $State = (Get-BitLockerVolume -MountPoint $MountPoint).VolumeStatus
@@ -59,15 +57,12 @@ function Wait-ForEncryption {
 # -----------------------------
 function Export-KeyProtectors {
     param ($MountPoint)
-
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
-
     foreach ($KP in $BL.KeyProtector) {
         $Recovery = "N/A"
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
             $Recovery = $KP.RecoveryPassword
         }
-
         Write-CsvLog `
             $MountPoint `
             $KP.KeyProtectorType `
@@ -79,7 +74,7 @@ function Export-KeyProtectors {
 
 # -----------------------------
 # Get drives
-# Include C: (OperatingSystem) + Fixed
+# Include C: (OperatingSystem) + Fixed data drives
 # -----------------------------
 $Drives = Get-BitLockerVolume |
 Where-Object {
@@ -109,7 +104,7 @@ foreach ($Drive in $Drives) {
         continue
     }
 
-    # Enable BitLocker
+    # Enable BitLocker (Used Space Only)
     Enable-BitLocker `
         -MountPoint $MountPoint `
         -UsedSpaceOnly `
