@@ -1,6 +1,6 @@
 # =========================================================
 # BitLocker Two-Stage Encryption Script (Server 2016)
-# Fully robust version with mount point checks
+# Fully robust version with ISE-safe Write-Host
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -160,7 +160,8 @@ foreach ($Drive in $Drives) {
     # Skip any drive with missing mount point
     if (-not $MountPoint) { continue }
 
-    Write-Host "`nProcessing drive $Counter of $TotalDrives: $MountPoint ..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host ("Processing drive {0} of {1}: {2} ..." -f $Counter, $TotalDrives, $MountPoint) -ForegroundColor Yellow
 
     # Enable BitLocker with password
     Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector -Password $SecurePassword
@@ -185,4 +186,5 @@ foreach ($Drive in $Drives) {
 }
 
 Write-CsvLog "ALL" "N/A" "N/A" "N/A" "Script completed"
-Write-Host "`nBitLocker encryption process completed for all drives." -ForegroundColor Green
+Write-Host ""
+Write-Host "BitLocker encryption process completed for all drives." -ForegroundColor Green
