@@ -1,6 +1,6 @@
 # =========================================================
 # BitLocker Full Encryption Script (C: + Data Drives)
-# Server 2016 / PowerShell ISE Safe / RecoveryKey + C: Pause
+# Server 2016 / ISE Safe / Full RecoveryKey + ProtectorID
 # =========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -53,20 +53,35 @@ function Wait-ForEncryption {
 }
 
 # -----------------------------
-# Export Key Protectors (with recovery key refresh)
+# Export Key Protectors (RecoveryKey + KeyProtectorId reliably)
 # -----------------------------
 function Export-KeyProtectors {
     param ($MountPoint)
 
-    # Give BitLocker a moment to finalize keys
+    # Give BitLocker a few seconds to finalize keys
     Start-Sleep -Seconds 5
 
-    # Refresh BitLocker object
+    # Refresh BitLocker volume
     $BL = Get-BitLockerVolume -MountPoint $MountPoint
 
-    foreach ($KP in $BL.KeyProtector) {
+    # Expand key protectors explicitly to get IDs
+    $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
+
+    foreach ($KP in $KeyProtectors) {
         $Recovery = "N/A"
-        $ProtectorId = $KP.KeyProtectorId.Guid
+        $ProtectorId = "N/A"
+
+        # Wait for KeyProtectorId to exist
+        $retry = 0
+        while (($KP.KeyProtectorId -eq $null) -and $retry -lt 10) {
+            Start-Sleep -Seconds 5
+            $BL = Get-BitLockerVolume -MountPoint $MountPoint
+            $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
+            $KP = $KeyProtectors | Where-Object { $_.KeyProtectorType -eq $KP.KeyProtectorType }
+            $retry++
+        }
+
+        if ($KP.KeyProtectorId) { $ProtectorId = $KP.KeyProtectorId.Guid }
 
         if ($KP.KeyProtectorType -eq "RecoveryPassword") {
             # Wait until RecoveryPassword is populated
@@ -74,7 +89,8 @@ function Export-KeyProtectors {
             while (-not $KP.RecoveryPassword -and $retry -lt 10) {
                 Start-Sleep -Seconds 5
                 $BL = Get-BitLockerVolume -MountPoint $MountPoint
-                $KP = $BL.KeyProtector | Where-Object {$_.KeyProtectorId -eq $ProtectorId}
+                $KeyProtectors = $BL | Select-Object -ExpandProperty KeyProtector
+                $KP = $KeyProtectors | Where-Object { $_.KeyProtectorId.Guid -eq $ProtectorId }
                 $retry++
             }
             $Recovery = $KP.RecoveryPassword
@@ -148,7 +164,7 @@ foreach ($Drive in $Drives) {
     Write-CsvLog $MountPoint "N/A" "N/A" "N/A" "Encryption completed"
 
     # -------------------------
-    # Export protector IDs + recovery keys
+    # Export protector IDs + recovery keys reliably
     # -------------------------
     Export-KeyProtectors -MountPoint $MountPoint
 
