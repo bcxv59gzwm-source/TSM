@@ -5,14 +5,14 @@ DHCP Scope Creation Script (CSV Headers: ScopeId, Name, Exclusions)
 
 CSV Input Requirements:
 
-Column A  : ScopeId      - Full subnet in CIDR format (e.g., 10.210.82.0/25)
+Column A  : ScopeId      - Full subnet in CIDR format (e.g., 10.210.82.0/26)
 Column B  : Name         - Full scope name
 Column C  : Exclusions   - Optional, comma-separated single IPs or ranges
 
 Behavior:
 
 1. IP Range Calculation:
-   - Network address = first IP in subnet
+   - Network address = first IP in subnet (must match ScopeId exactly)
    - Gateway = network +1 (automatically excluded)
    - DHCP Start Range = network +2
    - DHCP End Range = broadcast -1
@@ -82,19 +82,18 @@ $ExistingScopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
 
 foreach ($Row in $Raw) {
 
-    $CIDR       = $Row.ScopeId
-    $BaseName   = $Row.Name
-    $ExclusionsRaw = $Row.Exclusions
+    # Trim ScopeId and Name to remove spaces/quotes
+    $CIDR       = ($Row.ScopeId).Trim('"').Trim()
+    $BaseName   = ($Row.Name).Trim('"').Trim()
+    $ExclusionsRaw = if ($Row.PSObject.Properties.Value.Count -ge 3) { $Row.Exclusions } else { "" }
 
     if ([string]::IsNullOrWhiteSpace($CIDR) -or [string]::IsNullOrWhiteSpace($BaseName)) {
         Write-Warning "Row skipped due to missing ScopeId or Name"
         continue
     }
 
-    $CIDR     = $CIDR.Trim()
-    $BaseName = $BaseName.Trim()
-
-    Write-Host "`nProcessing $BaseName [$CIDR]" -ForegroundColor Cyan
+    # Debug print to verify exactly what we are processing
+    Write-Host "`nProcessing ScopeId: '$CIDR', Name: '$BaseName'" -ForegroundColor Cyan
 
     try {
         $IP = Get-IPRangeFromCIDR $CIDR
@@ -104,7 +103,7 @@ foreach ($Row in $Raw) {
         continue
     }
 
-    # Overlap check
+    # Check for overlapping scopes
     $Overlap = $ExistingScopes | Where-Object {
         ($_.StartRange -le $IP.EndRange) -and
         ($_.EndRange   -ge $IP.StartRange)
@@ -126,7 +125,7 @@ foreach ($Row in $Raw) {
         -LeaseDuration $LeaseDuration `
         -State Active
 
-    # Always exclude gateway
+    # Exclude gateway automatically
     Add-DhcpServerv4ExclusionRange `
         -ComputerName $DhcpServer `
         -ScopeId $IP.Network `
@@ -157,6 +156,7 @@ foreach ($Row in $Raw) {
         -ScopeId $IP.Network `
         -Router $IP.Gateway
 
+    # Log results
     $Results += [PSCustomObject]@{
         Name        = $BaseName
         ScopeId     = $CIDR
