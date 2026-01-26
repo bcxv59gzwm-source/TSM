@@ -1,4 +1,4 @@
-# DHCP Scope Creation Script Using CSV with Explicit Ranges and Gateway
+# DHCP Scope Creation Script with Gateway, Exclusions, and Option 43
 # Logs all actions to desktop
 
 # CSV paths
@@ -19,7 +19,8 @@ foreach ($scope in $scopes) {
         $StartRange = $scope.StartRange
         $EndRange   = $scope.EndRange
         $Gateway    = $scope.Gateway
-        $Exclusions = $scope.Exclusions -split ','
+        $Exclusions = $scope.Exclusions -split ','  # Split multiple exclusions
+        $Option43   = $scope.Option43
 
         # Create the DHCP scope
         Add-DhcpServerv4Scope `
@@ -36,9 +37,22 @@ foreach ($scope in $scopes) {
             -Router $Gateway `
             -ErrorAction Stop
 
+        # Set Option 43 if provided
+        if ($Option43 -and $Option43.Trim() -ne "") {
+            Set-DhcpServerv4OptionValue `
+                -ScopeId $ScopeID `
+                -OptionId 43 `
+                -Value $Option43 `
+                -ErrorAction Stop
+        }
+
         # Apply exclusions
         foreach ($excl in $Exclusions) {
-            if ($excl) {
+            if ($excl -and $excl.Trim() -ne "") {
+                # Support single IP by allowing Start=End
+                if ($excl -notmatch '-') {
+                    $excl = "$excl-$excl"
+                }
                 $exclStartEnd = $excl -split '-'
                 Add-DhcpServerv4ExclusionRange `
                     -ScopeId $ScopeID `
@@ -57,6 +71,7 @@ foreach ($scope in $scopes) {
             StartRange = $StartRange
             EndRange   = $EndRange
             Exclusions = $Exclusions -join ';'
+            Option43   = $Option43
         }
     }
     catch {
@@ -69,6 +84,7 @@ foreach ($scope in $scopes) {
             StartRange = $StartRange
             EndRange   = $EndRange
             Exclusions = $Exclusions -join ';'
+            Option43   = $Option43
         }
     }
 }
