@@ -21,11 +21,11 @@ if (-not (Test-Path $LogPath)) {
         Out-File $LogPath -Encoding UTF8
 }
 
-# Convert CIDR to decimal subnet mask
+# Function to convert CIDR to dotted decimal subnet mask
 function CIDRtoMask($cidr) {
     $bits = 0..31 | ForEach-Object { if ($_ -lt $cidr) {1} else {0} }
     $bytes = @($bits[0..7], $bits[8..15], $bits[16..23], $bits[24..31]) | ForEach-Object {
-        [convert]::ToInt32(($_ -join ''),2)
+        [Convert]::ToInt32(($_ -join ''), 2)
     }
     return ($bytes -join '.')
 }
@@ -36,20 +36,21 @@ $Scopes = Import-Csv $CsvPath
 foreach ($Scope in $Scopes) {
 
     $ScopeName   = $Scope.ScopeName.Trim()
-    $StartIP     = $Scope.StartIP.Trim()
-    $EndIP       = $Scope.EndIP.Trim()
-    $CIDR        = $Scope.CIDR.Trim()           # Column D
-    $SubnetMask  = $Scope.SubnetMask.Trim()     # Column E
-    $Description = $Scope.Description.Trim()    # Column G
+    $StartIP     = $Scope.StartIP.Trim()      # Column B
+    $EndIP       = $Scope.EndIP.Trim()        # Column C
+    $CIDR        = $Scope.CIDR.Trim()         # Column D
+    $SubnetMask  = $Scope.SubnetMask.Trim()   # Column E
+    $Description = $Scope.Description.Trim()  # Column G
     $Gateway     = $StartIP
 
     Write-Host "Processing scope: $ScopeName" -ForegroundColor Cyan
 
     try {
         # Verify CIDR matches SubnetMask
-        $ExpectedMask = CIDRtoMask([int]($CIDR.TrimStart("/")))
+        $cidrNumber = [int]($CIDR.TrimStart("/"))
+        $ExpectedMask = CIDRtoMask($cidrNumber)
         if ($SubnetMask -ne $ExpectedMask) {
-            Write-Host "CIDR mismatch for scope $ScopeName: CIDR $CIDR ≠ SubnetMask $SubnetMask" -ForegroundColor Red
+            Write-Host "CIDR mismatch for scope $ScopeName: CIDR $CIDR does not match SubnetMask $SubnetMask" -ForegroundColor Red
             $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Failed,CIDR mismatch"
             $LogLine | Out-File $LogPath -Append
             continue
@@ -72,8 +73,7 @@ foreach ($Scope in $Scopes) {
         # Build exclusions safely
         $ExcludedIPs = @()
         $StartOctets = $StartIP.Split('.')
-        for ($i=0; $i -lt $ExcludeOffsets.Count; $i++) {
-            $Offset = $ExcludeOffsets[$i]
+        foreach ($Offset in $ExcludeOffsets) {
             $LastOctet = [int]$StartOctets[3] + $Offset
             if ($LastOctet -gt 254) { $LastOctet = 254 }  # cap at 254
             $ExcludedIP = "$($StartOctets[0]).$($StartOctets[1]).$($StartOctets[2]).$LastOctet"
