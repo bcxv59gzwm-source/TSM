@@ -2,10 +2,10 @@ Import-Module DhcpServer
 
 # ===================== LEGEND =====================
 # Exclusions are offsets from the StartIP (gateway):
-# 0   = gateway only
-# 0..4 = first 5 IPs (gateway through +4)
-# @(0,5,10) = gateway plus specific IPs
-# Edit ONLY the $ExcludeOffsets line below to change exclusions.
+# 0     = gateway only
+# 0..4  = first 5 IPs (gateway through +4)
+# @(0,5,10) = gateway + specific IPs
+# Edit ONLY the $ExcludeOffsets line below to expand exclusions.
 # =================================================
 
 $ExcludeOffsets = @(0)   # EDIT HERE TO EXPAND EXCLUSIONS
@@ -27,10 +27,10 @@ $Scopes = Import-Csv $CsvPath
 foreach ($Scope in $Scopes) {
 
     $ScopeName   = $Scope.ScopeName
-    $StartIP     = $Scope.StartIP
-    $EndIP       = $Scope.EndIP
-    $SubnetMask  = $Scope.SubnetMask
-    $Description = $Scope.Description
+    $StartIP     = $Scope.StartIP.Trim()
+    $EndIP       = $Scope.EndIP.Trim()
+    $SubnetMask  = $Scope.SubnetMask.Trim()
+    $Description = $Scope.Description.Trim()
     $Gateway     = $StartIP
 
     Write-Host "Processing scope: $ScopeName" -ForegroundColor Cyan
@@ -42,7 +42,6 @@ foreach ($Scope in $Scopes) {
 
         if ($ExistingScope) {
             Write-Host "Scope exists – skipping" -ForegroundColor Yellow
-
             $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway, ,Skipped"
             $LogLine | Out-File $LogPath -Append
             continue
@@ -51,11 +50,14 @@ foreach ($Scope in $Scopes) {
         # Create scope
         Add-DhcpServerv4Scope -Name $ScopeName -Description $Description -StartRange $StartIP -EndRange $EndIP -SubnetMask $SubnetMask -State Active
 
-        # Build exclusions
+        # Build exclusions safely
         $ExcludedIPs = @()
-        foreach ($Offset in $ExcludeOffsets) {
-            $IPAddr = ([System.Net.IPAddress]::Parse($StartIP).Address + $Offset)
-            $ExcludedIP = [System.Net.IPAddress]::new($IPAddr).ToString()
+        $StartOctets = $StartIP.Split('.')
+        for ($i=0; $i -lt $ExcludeOffsets.Count; $i++) {
+            $Offset = $ExcludeOffsets[$i]
+            $LastOctet = [int]$StartOctets[3] + $Offset
+            if ($LastOctet -gt 254) { $LastOctet = 254 }  # cap at 254
+            $ExcludedIP = "$($StartOctets[0]).$($StartOctets[1]).$($StartOctets[2]).$LastOctet"
             $ExcludedIPs += $ExcludedIP
 
             # Apply exclusion
