@@ -33,20 +33,18 @@ function CIDRtoMask($cidr) {
 # Import CSV
 $Scopes = Import-Csv $CsvPath
 
-# Preview CSV headers to verify
 Write-Host "CSV headers detected:"
 $Scopes[0] | Get-Member -MemberType NoteProperty | ForEach-Object { Write-Host $_.Name }
 
 foreach ($Scope in $Scopes) {
 
     # ----------------- VARIABLE MAPPING -----------------
-    # Use ${} for headers with spaces or special characters
-    $StartIP     = $Scope.${'StartIP'}.Trim()      
-    $EndIP       = $Scope.${'EndIP'}.Trim()        
-    $CIDR        = $Scope.${'CIDR'}.Trim()         
-    $SubnetMask  = $Scope.${'SubnetMask'}.Trim()   
-    $Description = $Scope.${'Description'}.Trim()  
-    $ScopeName   = $Scope.${'ScopeName'}.Trim()    
+    $StartIP     = $Scope.StartIP.Trim()
+    $EndIP       = $Scope.EndIP.Trim()
+    $CIDR        = $Scope.CIDR.Trim()
+    $SubnetMask  = $Scope.SubnetMask.Trim()
+    $Description = $Scope.Description.Trim()
+    $ScopeName   = $Scope.ScopeName.Trim()
     $Gateway     = $StartIP
     # -----------------------------------------------------
 
@@ -57,7 +55,7 @@ foreach ($Scope in $Scopes) {
         $cidrNumber = [int]($CIDR.TrimStart("/"))
         $ExpectedMask = CIDRtoMask($cidrNumber)
         if ($SubnetMask -ne $ExpectedMask) {
-            Write-Host "CIDR mismatch for scope $ScopeName: CIDR $CIDR does not match SubnetMask $SubnetMask" -ForegroundColor Red
+            Write-Host "CIDR mismatch for scope $($ScopeName): CIDR $($CIDR) does not match SubnetMask $($SubnetMask)" -ForegroundColor Red
             $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Failed,CIDR mismatch"
             $LogLine | Out-File $LogPath -Append
             continue
