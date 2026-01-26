@@ -33,20 +33,27 @@ function CIDRtoMask($cidr) {
 # Import CSV
 $Scopes = Import-Csv $CsvPath
 
+# Preview CSV headers to verify
+Write-Host "CSV headers detected:"
+$Scopes[0] | Get-Member -MemberType NoteProperty | ForEach-Object { Write-Host $_.Name }
+
 foreach ($Scope in $Scopes) {
 
-    $ScopeName   = $Scope.ScopeName.Trim()
-    $StartIP     = $Scope.StartIP.Trim()      # Column B
-    $EndIP       = $Scope.EndIP.Trim()        # Column C
-    $CIDR        = $Scope.CIDR.Trim()         # Column D
-    $SubnetMask  = $Scope.SubnetMask.Trim()   # Column E
-    $Description = $Scope.Description.Trim()  # Column G
+    # ----------------- VARIABLE MAPPING -----------------
+    # Use quotes around CSV headers to handle spaces / special characters
+    $StartIP     = $Scope."StartIP".Trim()
+    $EndIP       = $Scope."EndIP".Trim()
+    $CIDR        = $Scope."CIDR".Trim()
+    $SubnetMask  = $Scope."SubnetMask".Trim()
+    $Description = $Scope."Description".Trim()
+    $ScopeName   = $Scope."ScopeName".Trim()
     $Gateway     = $StartIP
+    # -----------------------------------------------------
 
     Write-Host "Processing scope: $ScopeName" -ForegroundColor Cyan
 
     try {
-        # Verify CIDR matches SubnetMask
+        # ----------------- CIDR VERIFICATION -----------------
         $cidrNumber = [int]($CIDR.TrimStart("/"))
         $ExpectedMask = CIDRtoMask($cidrNumber)
         if ($SubnetMask -ne $ExpectedMask) {
@@ -56,7 +63,7 @@ foreach ($Scope in $Scopes) {
             continue
         }
 
-        # Check if scope exists
+        # ----------------- CHECK SCOPE EXISTENCE -----------------
         $ExistingScope = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
                          Where-Object { $_.StartRange -eq $StartIP }
 
@@ -67,10 +74,10 @@ foreach ($Scope in $Scopes) {
             continue
         }
 
-        # Create scope
+        # ----------------- CREATE SCOPE -----------------
         Add-DhcpServerv4Scope -Name $ScopeName -Description $Description -StartRange $StartIP -EndRange $EndIP -SubnetMask $SubnetMask -State Active
 
-        # Build exclusions safely
+        # ----------------- APPLY EXCLUSIONS -----------------
         $ExcludedIPs = @()
         $StartOctets = $StartIP.Split('.')
         foreach ($Offset in $ExcludeOffsets) {
@@ -79,16 +86,15 @@ foreach ($Scope in $Scopes) {
             $ExcludedIP = "$($StartOctets[0]).$($StartOctets[1]).$($StartOctets[2]).$LastOctet"
             $ExcludedIPs += $ExcludedIP
 
-            # Apply exclusion
             Add-DhcpServerv4ExclusionRange -ScopeId $StartIP -StartRange $ExcludedIP -EndRange $ExcludedIP
         }
 
-        # Set default gateway
+        # ----------------- SET DEFAULT GATEWAY -----------------
         Set-DhcpServerv4OptionValue -ScopeId $StartIP -Router $Gateway
 
         Write-Host "Created scope with exclusions applied" -ForegroundColor Green
 
-        # Log creation
+        # ----------------- LOG SUCCESS -----------------
         $ExcludedString = $ExcludedIPs -join " "
         $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,$ExcludedString,Created,"
         $LogLine | Out-File $LogPath -Append
