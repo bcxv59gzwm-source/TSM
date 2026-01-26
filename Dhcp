@@ -2,12 +2,11 @@
 ================================================================================
 DHCP Scope Creation Script (CSV Headers: ScopeId, Name, Exclusions)
 ================================================================================
-
-CSV Input Requirements:
+Requirements:
 
 Column A  : ScopeId      - Full subnet in CIDR format (e.g., 10.210.82.0/26)
-Column B  : Name         - Full scope name
-Column C  : Exclusions   - Optional, comma-separated single IPs or ranges
+Column B  : Name         - Full scope name (spaces, dashes, slashes ok)
+Column C  : Exclusions   - Optional, comma-separated IPs or ranges
 
 Behavior:
 
@@ -16,24 +15,22 @@ Behavior:
    - Gateway = network +1 (automatically excluded)
    - DHCP Start Range = network +2
    - DHCP End Range = broadcast -1
-   - Network and broadcast addresses are never assigned
 
 2. Exclusions:
-   - Gateway is always excluded
-   - Optional exclusions from Column C are applied
-   - Supports single IPs (10.210.82.10) and ranges (10.210.82.20-10.210.82.25)
-   - Comma-separated values allowed
+   - Gateway automatically excluded
+   - Optional exclusions from Column C applied
 
-3. Output:
-   - CSV of all created scopes written to desktop:
+3. Lease Duration: 14 days
+
+4. Output:
+   - CSV log written to desktop:
      Name, ScopeId, Network, Gateway, StartRange, EndRange, Exclusions
-
 ================================================================================
 #>
 
 $InputCsv   = "C:\Temp\dhcp.csv"
 $DhcpServer = "localhost"
-$LeaseDuration = "8.00:00:00"
+$LeaseDuration = "14.00:00:00"  # 14-day lease
 
 $Desktop = [Environment]::GetFolderPath("Desktop")
 $LogCsv  = Join-Path $Desktop "DHCP_Scope_Output_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
@@ -82,8 +79,8 @@ $ExistingScopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
 
 foreach ($Row in $Raw) {
 
-    # Trim ScopeId and Name to remove spaces/quotes
-    $CIDR       = ($Row.ScopeId).Trim('"').Trim()
+    # Clean ScopeId & Name
+    $CIDR       = [regex]::Replace($Row.ScopeId, '[^\d./]', '').Trim()
     $BaseName   = ($Row.Name).Trim('"').Trim()
     $ExclusionsRaw = if ($Row.PSObject.Properties.Value.Count -ge 3) { $Row.Exclusions } else { "" }
 
@@ -92,8 +89,8 @@ foreach ($Row in $Raw) {
         continue
     }
 
-    # Debug print to verify exactly what we are processing
-    Write-Host "`nProcessing ScopeId: '$CIDR', Name: '$BaseName'" -ForegroundColor Cyan
+    # Debug print
+    Write-Host "`nDEBUG: Processing ScopeId: '$CIDR', Name: '$BaseName'" -ForegroundColor Cyan
 
     try {
         $IP = Get-IPRangeFromCIDR $CIDR
@@ -103,7 +100,7 @@ foreach ($Row in $Raw) {
         continue
     }
 
-    # Check for overlapping scopes
+    # Overlap check
     $Overlap = $ExistingScopes | Where-Object {
         ($_.StartRange -le $IP.EndRange) -and
         ($_.EndRange   -ge $IP.StartRange)
@@ -114,7 +111,7 @@ foreach ($Row in $Raw) {
         continue
     }
 
-    # Create scope
+    # Create DHCP scope
     Add-DhcpServerv4Scope `
         -ComputerName $DhcpServer `
         -Name $BaseName `
@@ -125,7 +122,7 @@ foreach ($Row in $Raw) {
         -LeaseDuration $LeaseDuration `
         -State Active
 
-    # Exclude gateway automatically
+    # Exclude gateway
     Add-DhcpServerv4ExclusionRange `
         -ComputerName $DhcpServer `
         -ScopeId $IP.Network `
@@ -170,5 +167,6 @@ foreach ($Row in $Raw) {
     $ExistingScopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
 }
 
+# Export log CSV
 $Results | Export-Csv -Path $LogCsv -NoTypeInformation
 Write-Host "`nOutput written to $LogCsv" -ForegroundColor Green
