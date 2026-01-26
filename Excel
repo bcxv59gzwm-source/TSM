@@ -1,0 +1,2 @@
+=IF(RIGHT(B2,2)=".1",LEFT(B2,LEN(B2)-2)&".62",
+IF(RIGHT(B2,4)=".128",LEFT(B2,LEN(B2)-4)&".190",""))
