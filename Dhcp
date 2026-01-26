@@ -17,8 +17,17 @@ $LogPath = Join-Path $Desktop "DHCP_Scope_Changes.csv"
 
 # Initialize log file if missing
 if (-not (Test-Path $LogPath)) {
-    "Timestamp,ScopeName,StartIP,EndIP,SubnetMask,Description,Gateway,ExcludedIPs,Status" |
+    "Timestamp,ScopeName,StartIP,EndIP,SubnetMask,Description,Gateway,ExcludedIPs,Status,Notes" |
         Out-File $LogPath -Encoding UTF8
+}
+
+# Convert CIDR to decimal subnet mask
+function CIDRtoMask($cidr) {
+    $bits = 0..31 | ForEach-Object { if ($_ -lt $cidr) {1} else {0} }
+    $bytes = @($bits[0..7], $bits[8..15], $bits[16..23], $bits[24..31]) | ForEach-Object {
+        [convert]::ToInt32(($_ -join ''),2)
+    }
+    return ($bytes -join '.')
 }
 
 # Import CSV
@@ -26,23 +35,33 @@ $Scopes = Import-Csv $CsvPath
 
 foreach ($Scope in $Scopes) {
 
-    $ScopeName   = $Scope.ScopeName
+    $ScopeName   = $Scope.ScopeName.Trim()
     $StartIP     = $Scope.StartIP.Trim()
     $EndIP       = $Scope.EndIP.Trim()
-    $SubnetMask  = $Scope.SubnetMask.Trim()
-    $Description = $Scope.Description.Trim()
+    $CIDR        = $Scope.CIDR.Trim()           # Column D
+    $SubnetMask  = $Scope.SubnetMask.Trim()     # Column E
+    $Description = $Scope.Description.Trim()    # Column G
     $Gateway     = $StartIP
 
     Write-Host "Processing scope: $ScopeName" -ForegroundColor Cyan
 
     try {
+        # Verify CIDR matches SubnetMask
+        $ExpectedMask = CIDRtoMask([int]($CIDR.TrimStart("/")))
+        if ($SubnetMask -ne $ExpectedMask) {
+            Write-Host "CIDR mismatch for scope $ScopeName: CIDR $CIDR ≠ SubnetMask $SubnetMask" -ForegroundColor Red
+            $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Failed,CIDR mismatch"
+            $LogLine | Out-File $LogPath -Append
+            continue
+        }
+
         # Check if scope exists
         $ExistingScope = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
                          Where-Object { $_.StartRange -eq $StartIP }
 
         if ($ExistingScope) {
             Write-Host "Scope exists – skipping" -ForegroundColor Yellow
-            $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway, ,Skipped"
+            $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Skipped,Scope exists"
             $LogLine | Out-File $LogPath -Append
             continue
         }
@@ -71,12 +90,12 @@ foreach ($Scope in $Scopes) {
 
         # Log creation
         $ExcludedString = $ExcludedIPs -join " "
-        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,$ExcludedString,Created"
+        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,$ExcludedString,Created,"
         $LogLine | Out-File $LogPath -Append
     }
     catch {
         Write-Host "Failed to create scope: $ScopeName" -ForegroundColor Red
-        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway, ,Failed"
+        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Failed,Exception"
         $LogLine | Out-File $LogPath -Append
     }
 }
