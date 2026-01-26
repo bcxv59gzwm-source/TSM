@@ -1,41 +1,27 @@
 Import-Module DhcpServer
 
-# =====================================================================
-# EXCLUSION LOGIC LEGEND
-#
-# Exclusions are defined relative to the StartIP (gateway).
-#
-# Offset meaning:
-#   0  = StartIP (gateway)
-#   1  = StartIP + 1
-#   2  = StartIP + 2
-#   etc.
-#
-# Examples:
-#   @(0)        -> Exclude gateway only
-#   0..4        -> Exclude first 5 IPs (gateway through +4)
-#   @(0,5,10)   -> Exclude gateway plus specific IPs
-#   0..9        -> Exclude first 10 IPs
-#
-# To expand exclusions in the future:
-#   Edit ONLY the $ExcludeOffsets line below.
-# =====================================================================
+# ===================== LEGEND =====================
+# Exclusions are offsets from the StartIP (gateway):
+# 0   = gateway only
+# 0..4 = first 5 IPs (gateway through +4)
+# @(0,5,10) = gateway plus specific IPs
+# Edit ONLY the $ExcludeOffsets line below to change exclusions.
+# =================================================
 
-$ExcludeOffsets = @(0)   # <-- EDIT HERE TO EXPAND EXCLUSIONS
-
-# ===================== CONFIGURATION =====================
+$ExcludeOffsets = @(0)   # EDIT HERE TO EXPAND EXCLUSIONS
 $CsvPath = "C:\Temp\Scopes.csv"
-# ========================================================
 
+# Desktop log path
 $Desktop = [Environment]::GetFolderPath("Desktop")
 $LogPath = Join-Path $Desktop "DHCP_Scope_Changes.csv"
 
-# Initialize log file
+# Initialize log file if missing
 if (-not (Test-Path $LogPath)) {
     "Timestamp,ScopeName,StartIP,EndIP,SubnetMask,Description,Gateway,ExcludedIPs,Status" |
         Out-File $LogPath -Encoding UTF8
 }
 
+# Import CSV
 $Scopes = Import-Csv $CsvPath
 
 foreach ($Scope in $Scopes) {
@@ -50,56 +36,46 @@ foreach ($Scope in $Scopes) {
     Write-Host "Processing scope: $ScopeName" -ForegroundColor Cyan
 
     try {
-        # Check if scope already exists
-        if (Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
-            Where-Object { $_.StartRange -eq $StartIP }) {
+        # Check if scope exists
+        $ExistingScope = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
+                         Where-Object { $_.StartRange -eq $StartIP }
 
+        if ($ExistingScope) {
             Write-Host "Scope exists – skipping" -ForegroundColor Yellow
 
-            "$((Get-Date).ToString('s')),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Skipped" |
-                Out-File $LogPath -Append
+            $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway, ,Skipped"
+            $LogLine | Out-File $LogPath -Append
             continue
         }
 
         # Create scope
-        Add-DhcpServerv4Scope `
-            -Name $ScopeName `
-            -Description $Description `
-            -StartRange $StartIP `
-            -EndRange $EndIP `
-            -SubnetMask $SubnetMask `
-            -State Active
+        Add-DhcpServerv4Scope -Name $ScopeName -Description $Description -StartRange $StartIP -EndRange $EndIP -SubnetMask $SubnetMask -State Active
 
-        # Calculate excluded IPs based on offsets
-        $ExcludedIPs = foreach ($Offset in $ExcludeOffsets) {
-            ([IPAddress]$StartIP).Address + $Offset |
-                ForEach-Object { ([IPAddress]$_).ToString() }
+        # Build exclusions
+        $ExcludedIPs = @()
+        foreach ($Offset in $ExcludeOffsets) {
+            $IPAddr = ([System.Net.IPAddress]::Parse($StartIP).Address + $Offset)
+            $ExcludedIP = [System.Net.IPAddress]::new($IPAddr).ToString()
+            $ExcludedIPs += $ExcludedIP
+
+            # Apply exclusion
+            Add-DhcpServerv4ExclusionRange -ScopeId $StartIP -StartRange $ExcludedIP -EndRange $ExcludedIP
         }
 
-        # Apply exclusions
-        foreach ($IP in $ExcludedIPs) {
-            Add-DhcpServerv4ExclusionRange `
-                -ScopeId $StartIP `
-                -StartRange $IP `
-                -EndRange $IP
-        }
-
-        # Set default gateway (Option 003)
-        Set-DhcpServerv4OptionValue `
-            -ScopeId $StartIP `
-            -Router $Gateway
+        # Set default gateway
+        Set-DhcpServerv4OptionValue -ScopeId $StartIP -Router $Gateway
 
         Write-Host "Created scope with exclusions applied" -ForegroundColor Green
 
-        "$((Get-Date).ToString('s')),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway," +
-        """$($ExcludedIPs -join ' ')""",Created |
-            Out-File $LogPath -Append
+        # Log creation
+        $ExcludedString = $ExcludedIPs -join " "
+        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,$ExcludedString,Created"
+        $LogLine | Out-File $LogPath -Append
     }
     catch {
         Write-Host "Failed to create scope: $ScopeName" -ForegroundColor Red
-
-        "$((Get-Date).ToString('s')),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway,,Failed" |
-            Out-File $LogPath -Append
+        $LogLine = "$(Get-Date -Format s),$ScopeName,$StartIP,$EndIP,$SubnetMask,$Description,$Gateway, ,Failed"
+        $LogLine | Out-File $LogPath -Append
     }
 }
 
