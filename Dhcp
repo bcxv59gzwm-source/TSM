@@ -39,14 +39,13 @@ $Scopes[0] | Get-Member -MemberType NoteProperty | ForEach-Object { Write-Host $
 
 foreach ($Scope in $Scopes) {
 
-    # ----------------- VARIABLE MAPPING -----------------
-    # Use quotes around CSV headers to handle spaces / special characters
-    $StartIP     = $Scope."StartIP".Trim()
-    $EndIP       = $Scope."EndIP".Trim()
-    $CIDR        = $Scope."CIDR".Trim()
-    $SubnetMask  = $Scope."SubnetMask".Trim()
-    $Description = $Scope."Description".Trim()
-    $ScopeName   = $Scope."ScopeName".Trim()
+    # ----------------- VARIABLE MAPPING USING ${} -----------------
+    $StartIP     = $Scope.${'StartIP'}.Trim()      # Column B
+    $EndIP       = $Scope.${'EndIP'}.Trim()        # Column C
+    $CIDR        = $Scope.${'CIDR'}.Trim()         # Column D
+    $SubnetMask  = $Scope.${'SubnetMask'}.Trim()   # Column E
+    $Description = $Scope.${'Description'}.Trim()  # Column G
+    $ScopeName   = $Scope.${'ScopeName'}.Trim()    # Column H
     $Gateway     = $StartIP
     # -----------------------------------------------------
 
