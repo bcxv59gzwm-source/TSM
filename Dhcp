@@ -1,5 +1,5 @@
-# DHCP Scope Creation Script with Explicit Gateway from CSV
-# Handles dynamic subnet ranges, exclusions, and logs all activity
+# DHCP Scope Creation Script Using CSV with Explicit Ranges and Gateway
+# Logs all actions to desktop
 
 # CSV paths
 $csvPath = "$env:USERPROFILE\Desktop\dhcp_scopes.csv"
@@ -11,57 +11,40 @@ $log = @()
 # Import CSV
 $scopes = Import-Csv -Path $csvPath
 
-# Function to calculate usable IP range based on subnet mask
-function Get-IPRange {
-    param (
-        [string]$Network,
-        [string]$SubnetMask
-    )
-    $ip = [System.Net.IPAddress]::Parse($Network)
-    $mask = [System.Net.IPAddress]::Parse($SubnetMask).GetAddressBytes()
-    $ipBytes = $ip.GetAddressBytes()
-
-    $startBytes = [byte[]]($ipBytes.Clone())
-    $endBytes = [byte[]]($ipBytes.Clone())
-
-    for ($i = 0; $i -lt 4; $i++) {
-        $startBytes[$i] = $startBytes[$i] -band $mask[$i]
-        $endBytes[$i] = $endBytes[$i] -bor (-bnot $mask[$i])
-    }
-
-    # Skip network and broadcast addresses
-    $startBytes[3] = [byte]($startBytes[3] + 1)
-    $endBytes[3] = [byte]($endBytes[3] - 1)
-
-    $startIP = [System.Net.IPAddress]::Parse(($startBytes -join "."))
-    $endIP = [System.Net.IPAddress]::Parse(($endBytes -join "."))
-    return @{Start=$startIP; End=$endIP}
-}
-
 foreach ($scope in $scopes) {
     try {
         $ScopeID    = $scope.ScopeID
         $Name       = $scope.Name
         $SubnetMask = $scope.SubnetMask
+        $StartRange = $scope.StartRange
+        $EndRange   = $scope.EndRange
         $Gateway    = $scope.Gateway
         $Exclusions = $scope.Exclusions -split ','
 
-        # Calculate IP range dynamically
-        $range = Get-IPRange -Network $ScopeID -SubnetMask $SubnetMask
-        $startIP = $range.Start
-        $endIP = $range.End
-
         # Create the DHCP scope
-        Add-DhcpServerv4Scope -Name $Name -StartRange $startIP -EndRange $endIP -SubnetMask $SubnetMask -LeaseDuration ([TimeSpan]::FromDays(14)) -ErrorAction Stop
+        Add-DhcpServerv4Scope `
+            -Name $Name `
+            -StartRange $StartRange `
+            -EndRange $EndRange `
+            -SubnetMask $SubnetMask `
+            -LeaseDuration ([TimeSpan]::FromDays(14)) `
+            -ErrorAction Stop
 
-        # Set the gateway from CSV
-        Set-DhcpServerv4OptionValue -ScopeId $ScopeID -Router $Gateway -ErrorAction Stop
+        # Set gateway
+        Set-DhcpServerv4OptionValue `
+            -ScopeId $ScopeID `
+            -Router $Gateway `
+            -ErrorAction Stop
 
-        # Apply exclusions from CSV
+        # Apply exclusions
         foreach ($excl in $Exclusions) {
             if ($excl) {
                 $exclStartEnd = $excl -split '-'
-                Add-DhcpServerv4ExclusionRange -ScopeId $ScopeID -StartRange $exclStartEnd[0] -EndRange $exclStartEnd[1] -ErrorAction Stop
+                Add-DhcpServerv4ExclusionRange `
+                    -ScopeId $ScopeID `
+                    -StartRange $exclStartEnd[0] `
+                    -EndRange $exclStartEnd[1] `
+                    -ErrorAction Stop
             }
         }
 
@@ -71,20 +54,20 @@ foreach ($scope in $scopes) {
             Name       = $Name
             Status     = "Created Successfully"
             Gateway    = $Gateway
-            StartIP    = $startIP
-            EndIP      = $endIP
+            StartRange = $StartRange
+            EndRange   = $EndRange
             Exclusions = $Exclusions -join ';'
         }
     }
     catch {
-        # Log error
+        # Log failure
         $log += [PSCustomObject]@{
             ScopeID    = $ScopeID
             Name       = $Name
             Status     = "Error: $($_.Exception.Message)"
             Gateway    = $Gateway
-            StartIP    = ""
-            EndIP      = ""
+            StartRange = $StartRange
+            EndRange   = $EndRange
             Exclusions = $Exclusions -join ';'
         }
     }
