@@ -1,149 +1,174 @@
-# ===============================
-# Create-DHCPScope.ps1
-# ===============================
+<#
+================================================================================
+DHCP Scope Creation Script (CSV Headers: ScopeId, Name, Exclusions)
+================================================================================
 
-# -------- USER CONFIG ----------
-$InputCsv   = "C:\Temp\DHCP_Input.csv"
+CSV Input Requirements:
+
+Column A  : ScopeId      - Full subnet in CIDR format (e.g., 10.210.82.0/25)
+Column B  : Name         - Full scope name
+Column C  : Exclusions   - Optional, comma-separated single IPs or ranges
+
+Behavior:
+
+1. IP Range Calculation:
+   - Network address = first IP in subnet
+   - Gateway = network +1 (automatically excluded)
+   - DHCP Start Range = network +2
+   - DHCP End Range = broadcast -1
+   - Network and broadcast addresses are never assigned
+
+2. Exclusions:
+   - Gateway is always excluded
+   - Optional exclusions from Column C are applied
+   - Supports single IPs (10.210.82.10) and ranges (10.210.82.20-10.210.82.25)
+   - Comma-separated values allowed
+
+3. Output:
+   - CSV of all created scopes written to desktop:
+     Name, ScopeId, Network, Gateway, StartRange, EndRange, Exclusions
+
+================================================================================
+#>
+
+$InputCsv   = "C:\Temp\dhcp.csv"
 $DhcpServer = "localhost"
 $LeaseDuration = "8.00:00:00"
 
 $Desktop = [Environment]::GetFolderPath("Desktop")
-$OutputCsv = Join-Path $Desktop "DHCP_Scope_Output_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+$LogCsv  = Join-Path $Desktop "DHCP_Scope_Output_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
 
 $ErrorActionPreference = 'Stop'
 
-# ===============================
+# -------------------------------------
 # Helper Functions
-# ===============================
+# -------------------------------------
 function Convert-CIDRToMask {
-    param ([int]$CIDR)
-
-    if ($CIDR -lt 1 -or $CIDR -gt 32) {
-        throw "Invalid CIDR prefix: /$CIDR"
-    }
-
-    $Mask = [uint32]0
-    for ($i = 0; $i -lt $CIDR; $i++) {
-        $Mask = $Mask -bor (1 -shl (31 - $i))
-    }
-
-    [IPAddress]$Mask
+    param([int]$CIDR)
+    if ($CIDR -lt 1 -or $CIDR -gt 32) { throw "Invalid CIDR prefix: /$CIDR" }
+    $mask = [uint32]0
+    for ($i = 0; $i -lt $CIDR; $i++) { $mask = $mask -bor (1 -shl (31 - $i)) }
+    [IPAddress]$mask
 }
 
 function Get-IPRangeFromCIDR {
-    param ([string]$CIDR)
-
-    # Enforce CIDR format
-    if ($CIDR -notmatch '^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$') {
-        throw "Invalid SubnetCIDR format: $CIDR (expected x.x.x.x/nn)"
-    }
-
-    $NetworkIP, $Prefix = $CIDR.Split('/')
-    $Prefix = [int]$Prefix
-
-    $Mask = Convert-CIDRToMask -CIDR $Prefix
-    $IP = [IPAddress]$NetworkIP
-
-    $IPInt   = [BitConverter]::ToUInt32($IP.GetAddressBytes(), 0)
-    $MaskInt = [BitConverter]::ToUInt32($Mask.GetAddressBytes(), 0)
-
-    $NetworkInt   = $IPInt -band $MaskInt
-    $BroadcastInt = $NetworkInt -bor (-bnot $MaskInt)
-
-    # Ensure input IP is actual network boundary
-    if ($IPInt -ne $NetworkInt) {
-        throw "SubnetCIDR $CIDR is not a valid network boundary"
-    }
-
+    param([string]$CIDR)
+    if ($CIDR -notmatch '^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$') { throw "Invalid CIDR format: $CIDR" }
+    $network,$prefix = $CIDR.Split('/')
+    $prefix = [int]$prefix
+    $mask = Convert-CIDRToMask $prefix
+    $ip   = [IPAddress]$network
+    $ipInt   = [BitConverter]::ToUInt32($ip.GetAddressBytes(),0)
+    $maskInt = [BitConverter]::ToUInt32($mask.GetAddressBytes(),0)
+    $netInt = $ipInt -band $maskInt
+    if ($ipInt -ne $netInt) { throw "CIDR $CIDR is not a valid network boundary" }
+    $broadcast = $netInt -bor (-bnot $maskInt)
     @{
-        Network    = [IPAddress]$NetworkInt
-        Prefix     = $Prefix
-        Mask       = $Mask
-        Gateway    = [IPAddress]($NetworkInt + 1)
-        StartRange = [IPAddress]($NetworkInt + 2)
-        EndRange   = [IPAddress]($BroadcastInt - 1)
+        Network    = [IPAddress]$netInt
+        Mask       = $mask
+        Prefix     = $prefix
+        Gateway    = [IPAddress]($netInt + 1)
+        StartRange = [IPAddress]($netInt + 2)
+        EndRange   = [IPAddress]($broadcast - 1)
     }
 }
 
-# ===============================
-# Main Logic
-# ===============================
-$Scopes = Import-Csv $InputCsv
+# -------------------------------------
+# Import CSV
+# -------------------------------------
+$Raw = Import-Csv $InputCsv
 $Results = @()
-
 $ExistingScopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
 
-foreach ($Scope in $Scopes) {
+foreach ($Row in $Raw) {
 
-    $BaseName = $Scope.NameDesc.Trim()
-    $CIDR     = $Scope.SubnetCIDR.Trim()
-    $VLAN     = $Scope.VLAN.Trim()
+    $CIDR       = $Row.ScopeId
+    $BaseName   = $Row.Name
+    $ExclusionsRaw = $Row.Exclusions
 
-    Write-Host "`nProcessing $BaseName [$CIDR]" -ForegroundColor Cyan
-
-    $IPInfo = Get-IPRangeFromCIDR -CIDR $CIDR
-
-    $ScopeName = "$BaseName - $VLAN"
-    $ScopeDesc = $ScopeName
-
-    # -------- Overlap Detection ----------
-    $Overlap = $ExistingScopes | Where-Object {
-        ($_.StartRange -le $IPInfo.EndRange) -and
-        ($_.EndRange   -ge $IPInfo.StartRange)
-    }
-
-    if ($Overlap) {
-        Write-Warning "Scope overlap detected for $CIDR. Skipping."
+    if ([string]::IsNullOrWhiteSpace($CIDR) -or [string]::IsNullOrWhiteSpace($BaseName)) {
+        Write-Warning "Row skipped due to missing ScopeId or Name"
         continue
     }
 
-    # -------- Create Scope ----------
+    $CIDR     = $CIDR.Trim()
+    $BaseName = $BaseName.Trim()
+
+    Write-Host "`nProcessing $BaseName [$CIDR]" -ForegroundColor Cyan
+
+    try {
+        $IP = Get-IPRangeFromCIDR $CIDR
+    }
+    catch {
+        Write-Warning $_
+        continue
+    }
+
+    # Overlap check
+    $Overlap = $ExistingScopes | Where-Object {
+        ($_.StartRange -le $IP.EndRange) -and
+        ($_.EndRange   -ge $IP.StartRange)
+    }
+
+    if ($Overlap) {
+        Write-Warning "Overlap detected for $CIDR. Skipping."
+        continue
+    }
+
+    # Create scope
     Add-DhcpServerv4Scope `
         -ComputerName $DhcpServer `
-        -Name $ScopeName `
-        -Description $ScopeDesc `
-        -StartRange $IPInfo.StartRange `
-        -EndRange $IPInfo.EndRange `
-        -SubnetMask $IPInfo.Mask `
+        -Name $BaseName `
+        -Description $BaseName `
+        -StartRange $IP.StartRange `
+        -EndRange $IP.EndRange `
+        -SubnetMask $IP.Mask `
         -LeaseDuration $LeaseDuration `
         -State Active
 
-    # Exclude gateway explicitly
+    # Always exclude gateway
     Add-DhcpServerv4ExclusionRange `
         -ComputerName $DhcpServer `
-        -ScopeId $IPInfo.Network `
-        -StartRange $IPInfo.Gateway `
-        -EndRange $IPInfo.Gateway
+        -ScopeId $IP.Network `
+        -StartRange $IP.Gateway `
+        -EndRange $IP.Gateway
 
-    # Set gateway option
-    Set-DhcpServerv4OptionValue `
-        -ComputerName $DhcpServer `
-        -ScopeId $IPInfo.Network `
-        -Router $IPInfo.Gateway
-
-    Write-Host " DHCP scope created: $ScopeName" -ForegroundColor Green
-
-    # -------- Output Contract ----------
-    $Results += [PSCustomObject]@{
-        BaseName         = $BaseName
-        ScopeName        = $ScopeName
-        ScopeDescription= $ScopeDesc
-        SubnetCIDR       = $CIDR
-        Network          = $IPInfo.Network.IPAddressToString
-        Prefix           = $IPInfo.Prefix
-        Gateway          = $IPInfo.Gateway.IPAddressToString
-        StartRange       = $IPInfo.StartRange.IPAddressToString
-        EndRange         = $IPInfo.EndRange.IPAddressToString
-        VLAN             = $VLAN
+    # Apply optional exclusions
+    if ($ExclusionsRaw) {
+        $ExclusionItems = $ExclusionsRaw.Split(",")
+        foreach ($item in $ExclusionItems) {
+            $item = $item.Trim()
+            if ($item -match '-') {
+                $range = $item.Split('-')
+                Add-DhcpServerv4ExclusionRange -ComputerName $DhcpServer `
+                    -ScopeId $IP.Network `
+                    -StartRange $range[0].Trim() -EndRange $range[1].Trim()
+            } else {
+                Add-DhcpServerv4ExclusionRange -ComputerName $DhcpServer `
+                    -ScopeId $IP.Network `
+                    -StartRange $item -EndRange $item
+            }
+        }
     }
 
-    # Refresh scope cache
+    # Set default gateway
+    Set-DhcpServerv4OptionValue `
+        -ComputerName $DhcpServer `
+        -ScopeId $IP.Network `
+        -Router $IP.Gateway
+
+    $Results += [PSCustomObject]@{
+        Name        = $BaseName
+        ScopeId     = $CIDR
+        Network     = $IP.Network.IPAddressToString
+        Gateway     = $IP.Gateway.IPAddressToString
+        StartRange  = $IP.StartRange.IPAddressToString
+        EndRange    = $IP.EndRange.IPAddressToString
+        Exclusions  = $ExclusionsRaw
+    }
+
     $ExistingScopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
 }
 
-# ===============================
-# Write Output
-# ===============================
-$Results | Export-Csv -Path $OutputCsv -NoTypeInformation
-Write-Host "`nDHCP scope output written to:" -ForegroundColor Cyan
-Write-Host $OutputCsv -ForegroundColor Green
+$Results | Export-Csv -Path $LogCsv -NoTypeInformation
+Write-Host "`nOutput written to $LogCsv" -ForegroundColor Green
