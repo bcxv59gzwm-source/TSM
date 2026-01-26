@@ -39,13 +39,14 @@ $Scopes[0] | Get-Member -MemberType NoteProperty | ForEach-Object { Write-Host $
 
 foreach ($Scope in $Scopes) {
 
-    # ----------------- VARIABLE MAPPING USING ${} -----------------
-    $StartIP     = $Scope.${'StartIP'}.Trim()      # Column B
-    $EndIP       = $Scope.${'EndIP'}.Trim()        # Column C
-    $CIDR        = $Scope.${'CIDR'}.Trim()         # Column D
-    $SubnetMask  = $Scope.${'SubnetMask'}.Trim()   # Column E
-    $Description = $Scope.${'Description'}.Trim()  # Column G
-    $ScopeName   = $Scope.${'ScopeName'}.Trim()    # Column H
+    # ----------------- VARIABLE MAPPING -----------------
+    # Use ${} for headers with spaces or special characters
+    $StartIP     = $Scope.${'StartIP'}.Trim()      
+    $EndIP       = $Scope.${'EndIP'}.Trim()        
+    $CIDR        = $Scope.${'CIDR'}.Trim()         
+    $SubnetMask  = $Scope.${'SubnetMask'}.Trim()   
+    $Description = $Scope.${'Description'}.Trim()  
+    $ScopeName   = $Scope.${'ScopeName'}.Trim()    
     $Gateway     = $StartIP
     # -----------------------------------------------------
 
@@ -64,7 +65,7 @@ foreach ($Scope in $Scopes) {
 
         # ----------------- CHECK SCOPE EXISTENCE -----------------
         $ExistingScope = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
-                         Where-Object { $_.StartRange -eq $StartIP }
+                         Where-Object { $_.StartRange.ToString() -eq $StartIP }
 
         if ($ExistingScope) {
             Write-Host "Scope exists – skipping" -ForegroundColor Yellow
