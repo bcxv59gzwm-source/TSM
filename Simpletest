@@ -1,2 +1,0 @@
-$password = Read-Host -AsSecureString -Prompt "Enter encryption password"
-Enable-BitLocker -MountPoint "E:" -EncryptionMethod XtsAes256 -PasswordProtector -Password $password
