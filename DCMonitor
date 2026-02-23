@@ -1,0 +1,129 @@
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# ---------------- CONFIG ----------------
+$Servers = @(
+    @{ Name="server01"; Address="server01.domain.com"; iDRAC="192.168.10.101" },
+    @{ Name="server02"; Address="server02.domain.com"; iDRAC="192.168.10.102" },
+    @{ Name="server03"; Address="server03.domain.com"; iDRAC="192.168.10.103" },
+    @{ Name="server04"; Address="server04.domain.com"; iDRAC="192.168.10.104" },
+    @{ Name="server05"; Address="server05.domain.com"; iDRAC="192.168.10.105" },
+    @{ Name="server06"; Address="server06.domain.com"; iDRAC="192.168.10.106" },
+    @{ Name="server07"; Address="server07.domain.com"; iDRAC="192.168.10.107" },
+    @{ Name="server08"; Address="server08.domain.com"; iDRAC="192.168.10.108" },
+    @{ Name="server09"; Address="server09.domain.com"; iDRAC="192.168.10.109" },
+    @{ Name="server10"; Address="server10.domain.com"; iDRAC="192.168.10.110" },
+    @{ Name="server11"; Address="server11.domain.com"; iDRAC="192.168.10.111" },
+    @{ Name="server12"; Address="server12.domain.com"; iDRAC="192.168.10.112" }
+)
+
+$IntervalSeconds = 5
+$LogRoot = "$env:USERPROFILE\Desktop\PingMonitorLogs"
+
+if (!(Test-Path $LogRoot)) { New-Item -ItemType Directory -Path $LogRoot | Out-Null }
+
+# ---------------------------------------
+
+# Create Form
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Live Server Monitor"
+$form.Size = New-Object System.Drawing.Size(900,600)
+$form.StartPosition = "CenterScreen"
+
+# Summary Label
+$summaryLabel = New-Object System.Windows.Forms.Label
+$summaryLabel.Location = New-Object System.Drawing.Point(10,10)
+$summaryLabel.Size = New-Object System.Drawing.Size(850,30)
+$summaryLabel.Font = New-Object System.Drawing.Font("Segoe UI",12,[System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($summaryLabel)
+
+# Grid
+$grid = New-Object System.Windows.Forms.DataGridView
+$grid.Location = New-Object System.Drawing.Point(10,50)
+$grid.Size = New-Object System.Drawing.Size(860,480)
+$grid.AutoSizeColumnsMode = "Fill"
+$grid.ColumnCount = 4
+$grid.Columns[0].Name = "Server"
+$grid.Columns[1].Name = "Status"
+$grid.Columns[2].Name = "Response (ms)"
+$grid.Columns[3].Name = "Open iDRAC"
+$form.Controls.Add($grid)
+
+$ServerStates = @{}
+
+foreach ($srv in $Servers) {
+    $rowIndex = $grid.Rows.Add($srv.Name,"UNKNOWN","","Open")
+    $ServerStates[$srv.Name] = @{
+        Address = $srv.Address
+        iDRAC   = $srv.iDRAC
+        Row     = $rowIndex
+        LastState = "UNKNOWN"
+    }
+}
+
+# Timer
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = $IntervalSeconds * 1000
+
+$timer.Add_Tick({
+
+    $UpCount = 0
+    $DownCount = 0
+
+    foreach ($key in $ServerStates.Keys) {
+
+        $srv = $ServerStates[$key]
+        $row = $srv.Row
+
+        try {
+            $ping = Test-Connection -ComputerName $srv.Address -Count 1 -ErrorAction Stop
+            $status = "UP"
+            $response = $ping.ResponseTime
+        }
+        catch {
+            $status = "DOWN"
+            $response = ""
+        }
+
+        if ($status -ne $srv.LastState) {
+            [console]::beep(1000,300)
+            $srv.LastState = $status
+        }
+
+        $grid.Rows[$row].Cells[1].Value = $status
+        $grid.Rows[$row].Cells[2].Value = $response
+
+        if ($status -eq "UP") {
+            $grid.Rows[$row].DefaultCellStyle.BackColor = "LightGreen"
+            $UpCount++
+        } else {
+            $grid.Rows[$row].DefaultCellStyle.BackColor = "LightCoral"
+            $DownCount++
+        }
+
+        # Logging
+        $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logTxt = Join-Path $LogRoot "$key.txt"
+        $logCsv = Join-Path $LogRoot "$key.csv"
+
+        Add-Content $logTxt "$Timestamp | $status | $response"
+        Add-Content $logCsv "$Timestamp,$status,$response"
+    }
+
+    $summaryLabel.Text = "UP: $UpCount     DOWN: $DownCount     Last Update: $(Get-Date -Format HH:mm:ss)"
+
+})
+
+# iDRAC Click Event
+$grid.Add_CellContentClick({
+    param($sender,$e)
+
+    if ($e.ColumnIndex -eq 3 -and $e.RowIndex -ge 0) {
+        $serverName = $grid.Rows[$e.RowIndex].Cells[0].Value
+        $idrac = $ServerStates[$serverName].iDRAC
+        Start-Process "https://$idrac"
+    }
+})
+
+$timer.Start()
+$form.ShowDialog()
