@@ -1,5 +1,0 @@
-do {
-    Start-Sleep -Seconds 5
-    $BL = Get-BitLockerVolume -MountPoint $MountPoint
-    $RecoveryKP = $BL.KeyProtector | Where-Object {$_.KeyProtectorType -eq "RecoveryPassword"}
-} while (-not $RecoveryKP.RecoveryPassword)
