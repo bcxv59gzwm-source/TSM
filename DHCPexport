@@ -1,0 +1,56 @@
+# ================================
+# DHCP Full Scope Export Script
+# ================================
+
+param (
+    [string]$DhcpServer = "localhost",
+    [string]$ExportPath = "$env:USERPROFILE\Desktop\DHCP_Scope_Export.csv"
+)
+
+Import-Module DhcpServer -ErrorAction Stop
+
+$results = @()
+
+Write-Host "Collecting scopes from $DhcpServer..." -ForegroundColor Cyan
+
+# Get all IPv4 scopes
+$scopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
+
+foreach ($scope in $scopes) {
+
+    Write-Host "Processing Scope: $($scope.ScopeId)" -ForegroundColor Yellow
+
+    # Get exclusions
+    $exclusions = Get-DhcpServerv4ExclusionRange -ComputerName $DhcpServer -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+    $exclusionText = if ($exclusions) {
+        ($exclusions | ForEach-Object { "$($_.StartRange)-$($_.EndRange)" }) -join "; "
+    } else {
+        "None"
+    }
+
+    # Get scope options
+    $options = Get-DhcpServerv4OptionValue -ComputerName $DhcpServer -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+    $optionText = if ($options) {
+        ($options | ForEach-Object { "Option$($_.OptionId)=$($_.Value)" }) -join "; "
+    } else {
+        "None"
+    }
+
+    $results += [PSCustomObject]@{
+        ScopeName        = $scope.Name
+        Description      = $scope.Description
+        ScopeId          = $scope.ScopeId
+        SubnetMask       = $scope.SubnetMask
+        StartRange       = $scope.StartRange
+        EndRange         = $scope.EndRange
+        State            = $scope.State
+        LeaseDuration    = $scope.LeaseDuration
+        Exclusions       = $exclusionText
+        ScopeOptions     = $optionText
+    }
+}
+
+# Export to CSV
+$results | Export-Csv -Path $ExportPath -NoTypeInformation -Encoding UTF8
+
+Write-Host "Export complete: $ExportPath" -ForegroundColor Green
