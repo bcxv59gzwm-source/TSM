@@ -1,0 +1,86 @@
+# ================================
+# Remote DHCP Full Scope Export
+# ================================
+
+Import-Module DhcpServer -ErrorAction Stop
+
+Write-Host ""
+$DhcpServer = Read-Host "Enter the DHCP server name (FQDN or hostname)"
+
+# Optional: prompt for alternate credentials
+$UseAltCreds = Read-Host "Use alternate credentials? (Y/N)"
+
+if ($UseAltCreds -match "^[Yy]") {
+    $Credential = Get-Credential
+} else {
+    $Credential = $null
+}
+
+# Test connectivity first
+Write-Host "`nTesting connectivity to $DhcpServer ..." -ForegroundColor Cyan
+
+try {
+    if ($Credential) {
+        Get-DhcpServerv4Scope -ComputerName $DhcpServer -Credential $Credential -ErrorAction Stop | Out-Null
+    } else {
+        Get-DhcpServerv4Scope -ComputerName $DhcpServer -ErrorAction Stop | Out-Null
+    }
+    Write-Host "Connection successful.`n" -ForegroundColor Green
+}
+catch {
+    Write-Host "Failed to connect to $DhcpServer" -ForegroundColor Red
+    Write-Host $_.Exception.Message
+    exit
+}
+
+$results = @()
+
+$scopes = if ($Credential) {
+    Get-DhcpServerv4Scope -ComputerName $DhcpServer -Credential $Credential
+} else {
+    Get-DhcpServerv4Scope -ComputerName $DhcpServer
+}
+
+foreach ($scope in $scopes) {
+
+    Write-Host "Processing Scope: $($scope.ScopeId)" -ForegroundColor Yellow
+
+    $exclusions = if ($Credential) {
+        Get-DhcpServerv4ExclusionRange -ComputerName $DhcpServer -ScopeId $scope.ScopeId -Credential $Credential -ErrorAction SilentlyContinue
+    } else {
+        Get-DhcpServerv4ExclusionRange -ComputerName $DhcpServer -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+    }
+
+    $exclusionText = if ($exclusions) {
+        ($exclusions | ForEach-Object { "$($_.StartRange)-$($_.EndRange)" }) -join "; "
+    } else { "None" }
+
+    $options = if ($Credential) {
+        Get-DhcpServerv4OptionValue -ComputerName $DhcpServer -ScopeId $scope.ScopeId -Credential $Credential -ErrorAction SilentlyContinue
+    } else {
+        Get-DhcpServerv4OptionValue -ComputerName $DhcpServer -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+    }
+
+    $optionText = if ($options) {
+        ($options | ForEach-Object { "Option$($_.OptionId)=$($_.Value)" }) -join "; "
+    } else { "None" }
+
+    $results += [PSCustomObject]@{
+        ScopeName     = $scope.Name
+        Description   = $scope.Description
+        ScopeId       = $scope.ScopeId
+        SubnetMask    = $scope.SubnetMask
+        StartRange    = $scope.StartRange
+        EndRange      = $scope.EndRange
+        State         = $scope.State
+        LeaseDuration = $scope.LeaseDuration
+        Exclusions    = $exclusionText
+        ScopeOptions  = $optionText
+    }
+}
+
+$ExportPath = "$env:USERPROFILE\Desktop\DHCP_Export_$DhcpServer.csv"
+
+$results | Export-Csv -Path $ExportPath -NoTypeInformation -Encoding UTF8
+
+Write-Host "`nExport complete: $ExportPath" -ForegroundColor Green
