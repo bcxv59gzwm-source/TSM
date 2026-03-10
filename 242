@@ -1,0 +1,79 @@
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$CsvPath = Join-Path $DesktopPath "242changes.csv"
+$BackupPath = Join-Path $DesktopPath "Option242_Backup_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
+
+# Check CSV exists
+if (-not (Test-Path $CsvPath)) {
+    Write-Host "CSV file not found at $CsvPath" -ForegroundColor Red
+    exit
+}
+
+# Import CSV
+$ScopesFromCsv = Import-Csv $CsvPath
+
+# Get existing scopes
+$ExistingScopes = Get-DhcpServerv4Scope
+
+# Ensure Option 242 exists
+if (-not (Get-DhcpServerv4OptionDefinition -OptionId 242 -ErrorAction SilentlyContinue)) {
+    Write-Host "Creating Option 242 definition..."
+    Add-DhcpServerv4OptionDefinition `
+        -Name "Option242" `
+        -OptionId 242 `
+        -Type String `
+        -Description "Vendor Specific Option 242"
+}
+
+# ----- BACKUP CURRENT VALUES -----
+$BackupData = @()
+
+foreach ($Entry in $ScopesFromCsv) {
+
+    $ScopeExists = $ExistingScopes | Where-Object { $_.ScopeId -eq $Entry.ScopeId }
+
+    if (-not $ScopeExists) {
+        Write-Host "Scope $($Entry.ScopeId) does NOT exist. Skipping." -ForegroundColor Yellow
+        continue
+    }
+
+    $CurrentOption = Get-DhcpServerv4OptionValue `
+        -ScopeId $Entry.ScopeId `
+        -OptionId 242 `
+        -ErrorAction SilentlyContinue
+
+    $CurrentValue = if ($CurrentOption) { $CurrentOption.Value } else { "NOT SET" }
+
+    $BackupData += [PSCustomObject]@{
+        ScopeId      = $Entry.ScopeId
+        CurrentValue = $CurrentValue
+    }
+}
+
+# Export backup
+$BackupData | Export-Csv -Path $BackupPath -NoTypeInformation
+Write-Host "Backup exported to $BackupPath" -ForegroundColor Cyan
+
+# ----- APPLY NEW VALUES -----
+foreach ($Entry in $ScopesFromCsv) {
+
+    $ScopeExists = $ExistingScopes | Where-Object { $_.ScopeId -eq $Entry.ScopeId }
+
+    if (-not $ScopeExists) {
+        continue
+    }
+
+    try {
+        Set-DhcpServerv4OptionValue `
+            -ScopeId $Entry.ScopeId `
+            -OptionId 242 `
+            -Value $Entry.Option242Value `
+            -ErrorAction Stop
+
+        Write-Host "Updated Scope $($Entry.ScopeId)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed on Scope $($Entry.ScopeId) - $_" -ForegroundColor Red
+    }
+}
+
+Write-Host "Processing complete."
