@@ -1,7 +1,10 @@
-# Path to CSV
+# ----- Change Order Variable -----
+$ChangeOrder = "CHG123456"
+
+# ----- CSV Location -----
 $CsvPath = "C:\Users\Public\Desktop\reservations.csv"
 
-# Import reservations
+# Import CSV
 $Reservations = Import-Csv $CsvPath
 
 foreach ($Reservation in $Reservations) {
@@ -9,17 +12,21 @@ foreach ($Reservation in $Reservations) {
     $ScopeID = $Reservation.ScopeID
     $MAC = $Reservation.MACAddress
     $IP = $Reservation.IPAddress
+    $Queue = $Reservation.Queue
+
+    # Build Description
+    $Description = "$ChangeOrder - $Queue"
 
     try {
         Add-DhcpServerv4Reservation `
             -ScopeId $ScopeID `
             -IPAddress $IP `
             -ClientId $MAC `
-            -Description "CSV Imported Reservation"
+            -Description $Description
 
-        Write-Host "Reservation added: $IP -> $MAC (Scope $ScopeID)" -ForegroundColor Green
+        Write-Host "Added reservation $IP -> $MAC | $Description" -ForegroundColor Green
     }
     catch {
-        Write-Host "Failed to add reservation for $IP in scope $ScopeID" -ForegroundColor Red
+        Write-Host "Failed reservation $IP in scope $ScopeID" -ForegroundColor Red
     }
 }
