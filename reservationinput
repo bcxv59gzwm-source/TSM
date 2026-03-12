@@ -1,0 +1,25 @@
+# Path to CSV
+$CsvPath = "C:\Users\Public\Desktop\reservations.csv"
+
+# Import reservations
+$Reservations = Import-Csv $CsvPath
+
+foreach ($Reservation in $Reservations) {
+
+    $ScopeID = $Reservation.ScopeID
+    $MAC = $Reservation.MACAddress
+    $IP = $Reservation.IPAddress
+
+    try {
+        Add-DhcpServerv4Reservation `
+            -ScopeId $ScopeID `
+            -IPAddress $IP `
+            -ClientId $MAC `
+            -Description "CSV Imported Reservation"
+
+        Write-Host "Reservation added: $IP -> $MAC (Scope $ScopeID)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed to add reservation for $IP in scope $ScopeID" -ForegroundColor Red
+    }
+}
