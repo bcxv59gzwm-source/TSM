@@ -1,79 +1,63 @@
-$DesktopPath = [Environment]::GetFolderPath("Desktop")
-$CsvPath = Join-Path $DesktopPath "242changes.csv"
-$BackupPath = Join-Path $DesktopPath "Option242_Backup_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
+# DHCP Server Name (use localhost if running directly on server)
+$DhcpServer = "localhost"
 
-# Check CSV exists
-if (-not (Test-Path $CsvPath)) {
-    Write-Host "CSV file not found at $CsvPath" -ForegroundColor Red
-    exit
-}
+# CSV Path (Desktop)
+$CsvPath = "$env:USERPROFILE\Desktop\242changes.csv"
+
+# Backup file
+$BackupPath = "$env:USERPROFILE\Desktop\DHCP_242_Backup_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
 
 # Import CSV
-$ScopesFromCsv = Import-Csv $CsvPath
+$Scopes = Import-Csv -Path $CsvPath
 
-# Get existing scopes
-$ExistingScopes = Get-DhcpServerv4Scope
-
-# Ensure Option 242 exists
-if (-not (Get-DhcpServerv4OptionDefinition -OptionId 242 -ErrorAction SilentlyContinue)) {
-    Write-Host "Creating Option 242 definition..."
-    Add-DhcpServerv4OptionDefinition `
-        -Name "Option242" `
-        -OptionId 242 `
-        -Type String `
-        -Description "Vendor Specific Option 242"
-}
-
-# ----- BACKUP CURRENT VALUES -----
+# Array to store backup data
 $BackupData = @()
 
-foreach ($Entry in $ScopesFromCsv) {
+foreach ($Scope in $Scopes) {
+    $ScopeId = $Scope.ScopeId
+    $NewValue = $Scope.OptionValue
 
-    $ScopeExists = $ExistingScopes | Where-Object { $_.ScopeId -eq $Entry.ScopeId }
+    Write-Host "Processing Scope: $ScopeId" -ForegroundColor Cyan
 
-    if (-not $ScopeExists) {
-        Write-Host "Scope $($Entry.ScopeId) does NOT exist. Skipping." -ForegroundColor Yellow
+    # Validate scope exists
+    $ExistingScope = Get-DhcpServerv4Scope -ComputerName $DhcpServer -ScopeId $ScopeId -ErrorAction SilentlyContinue
+
+    if (-not $ExistingScope) {
+        Write-Host "⚠️ Scope $ScopeId not found. Skipping..." -ForegroundColor Yellow
         continue
     }
 
-    $CurrentOption = Get-DhcpServerv4OptionValue `
-        -ScopeId $Entry.ScopeId `
-        -OptionId 242 `
-        -ErrorAction SilentlyContinue
+    try {
+        # Get current Option 242 value (if exists)
+        $CurrentOption = Get-DhcpServerv4OptionValue -ComputerName $DhcpServer -ScopeId $ScopeId -OptionId 242 -ErrorAction SilentlyContinue
 
-    $CurrentValue = if ($CurrentOption) { $CurrentOption.Value } else { "NOT SET" }
+        $OldValue = if ($CurrentOption) {
+            ($CurrentOption.Value -join ",")
+        } else {
+            "NOT SET"
+        }
 
-    $BackupData += [PSCustomObject]@{
-        ScopeId      = $Entry.ScopeId
-        CurrentValue = $CurrentValue
+        # Save to backup
+        $BackupData += [PSCustomObject]@{
+            ScopeId   = $ScopeId
+            OldValue  = $OldValue
+        }
+
+        # Set new Option 242 value
+        Set-DhcpServerv4OptionValue `
+            -ComputerName $DhcpServer `
+            -ScopeId $ScopeId `
+            -OptionId 242 `
+            -Value $NewValue
+
+        Write-Host "✅ Updated Option 242 for $ScopeId" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "❌ Error updating $ScopeId : $_" -ForegroundColor Red
     }
 }
 
 # Export backup
 $BackupData | Export-Csv -Path $BackupPath -NoTypeInformation
-Write-Host "Backup exported to $BackupPath" -ForegroundColor Cyan
 
-# ----- APPLY NEW VALUES -----
-foreach ($Entry in $ScopesFromCsv) {
-
-    $ScopeExists = $ExistingScopes | Where-Object { $_.ScopeId -eq $Entry.ScopeId }
-
-    if (-not $ScopeExists) {
-        continue
-    }
-
-    try {
-        Set-DhcpServerv4OptionValue `
-            -ScopeId $Entry.ScopeId `
-            -OptionId 242 `
-            -Value $Entry.Option242Value `
-            -ErrorAction Stop
-
-        Write-Host "Updated Scope $($Entry.ScopeId)" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Failed on Scope $($Entry.ScopeId) - $_" -ForegroundColor Red
-    }
-}
-
-Write-Host "Processing complete."
+Write-Host "`n📦 Backup saved to: $BackupPath" -ForegroundColor Magenta
