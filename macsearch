@@ -1,23 +1,20 @@
-# Prompt for DHCP Server
-$DhcpServer = Read-Host "Enter DHCP Server Name"
-
 # Prompt for MAC Address
 $MacAddress = Read-Host "Enter MAC Address (any format: 00-11-22-33-44-55 or 001122334455)"
 
 # Normalize MAC (strip separators and uppercase)
 $NormalizedMac = ($MacAddress -replace '[-:.]', '').ToUpper()
 
-Write-Host "`nSearching for MAC Address: $NormalizedMac on $DhcpServer..." -ForegroundColor Cyan
+Write-Host "`nSearching local DHCP server for MAC Address: $NormalizedMac..." -ForegroundColor Cyan
 
 $Found = $false
 
-# Get all scopes
-$Scopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
+# Get all local scopes (no -ComputerName needed)
+$Scopes = Get-DhcpServerv4Scope
 
 foreach ($Scope in $Scopes) {
 
     # Get leases for each scope
-    $Leases = Get-DhcpServerv4Lease -ComputerName $DhcpServer -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
+    $Leases = Get-DhcpServerv4Lease -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
 
     foreach ($Lease in $Leases) {
         $LeaseMac = ($Lease.ClientId -replace '[-:.]', '').ToUpper()
@@ -38,8 +35,8 @@ foreach ($Scope in $Scopes) {
         }
     }
 
-    # Check reservations too
-    $Reservations = Get-DhcpServerv4Reservation -ComputerName $DhcpServer -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
+    # Check reservations
+    $Reservations = Get-DhcpServerv4Reservation -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
 
     foreach ($Res in $Reservations) {
         $ResMac = ($Res.ClientId -replace '[-:.]', '').ToUpper()
