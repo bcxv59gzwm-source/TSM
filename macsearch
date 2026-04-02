@@ -1,0 +1,64 @@
+# Prompt for DHCP Server
+$DhcpServer = Read-Host "Enter DHCP Server Name"
+
+# Prompt for MAC Address
+$MacAddress = Read-Host "Enter MAC Address (any format: 00-11-22-33-44-55 or 001122334455)"
+
+# Normalize MAC (strip separators and uppercase)
+$NormalizedMac = ($MacAddress -replace '[-:.]', '').ToUpper()
+
+Write-Host "`nSearching for MAC Address: $NormalizedMac on $DhcpServer..." -ForegroundColor Cyan
+
+$Found = $false
+
+# Get all scopes
+$Scopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
+
+foreach ($Scope in $Scopes) {
+
+    # Get leases for each scope
+    $Leases = Get-DhcpServerv4Lease -ComputerName $DhcpServer -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
+
+    foreach ($Lease in $Leases) {
+        $LeaseMac = ($Lease.ClientId -replace '[-:.]', '').ToUpper()
+
+        if ($LeaseMac -eq $NormalizedMac) {
+
+            Write-Host "`n=== MATCH FOUND (LEASE) ===" -ForegroundColor Green
+            Write-Host "Scope ID   : $($Scope.ScopeId)"
+            Write-Host "Scope Name : $($Scope.Name)"
+            Write-Host "IP Address : $($Lease.IPAddress)"
+            Write-Host "Host Name  : $($Lease.HostName)"
+            Write-Host "Client ID  : $($Lease.ClientId)"
+            Write-Host "Lease Exp  : $($Lease.LeaseExpiryTime)"
+            Write-Host "State      : $($Lease.AddressState)"
+            Write-Host "----------------------------------------"
+
+            $Found = $true
+        }
+    }
+
+    # Check reservations too
+    $Reservations = Get-DhcpServerv4Reservation -ComputerName $DhcpServer -ScopeId $Scope.ScopeId -ErrorAction SilentlyContinue
+
+    foreach ($Res in $Reservations) {
+        $ResMac = ($Res.ClientId -replace '[-:.]', '').ToUpper()
+
+        if ($ResMac -eq $NormalizedMac) {
+
+            Write-Host "`n=== MATCH FOUND (RESERVATION) ===" -ForegroundColor Yellow
+            Write-Host "Scope ID   : $($Scope.ScopeId)"
+            Write-Host "Scope Name : $($Scope.Name)"
+            Write-Host "IP Address : $($Res.IPAddress)"
+            Write-Host "Name       : $($Res.Name)"
+            Write-Host "Client ID  : $($Res.ClientId)"
+            Write-Host "----------------------------------------"
+
+            $Found = $true
+        }
+    }
+}
+
+if (-not $Found) {
+    Write-Host "`nNo matching MAC address found in any scope." -ForegroundColor Red
+}
