@@ -1,0 +1,216 @@
+# ================================
+# CONFIGURATION
+# ================================
+
+# Manually defined base path on script server
+$basePath = "C:\Scripts\VMwareTools"
+
+# Input CSV (must contain column: ServerName)
+$csvPath = "$basePath\servers.csv"
+
+# Output files
+$logFile    = "$basePath\VMTools_Upgrade_Log.txt"
+$reportFile = "$basePath\VMTools_Compliance_Report.csv"
+
+# VMware Tools installer (remote share)
+$installerPath = "\\YourFileServer\VMwareTools\setup64.exe"
+
+# Target VMware Tools version
+$targetVersion = "12.3.5"
+
+# Ensure base path exists
+if (-not (Test-Path $basePath)) {
+    New-Item -Path $basePath -ItemType Directory | Out-Null
+}
+
+# ================================
+# LOG FUNCTION
+# ================================
+function Write-Log {
+    param ([string]$msg)
+    $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$time - $msg" | Out-File -Append $logFile
+    Write-Host "$time - $msg"
+}
+
+# ================================
+# IMPORT SERVER LIST
+# ================================
+try {
+    $servers = Import-Csv $csvPath
+    Write-Log "Imported server list from $csvPath"
+}
+catch {
+    Write-Log "ERROR: Failed to read CSV - $_"
+    exit
+}
+
+# Initialize compliance array
+$compliance = @()
+
+# ================================
+# MAIN LOOP
+# ================================
+foreach ($entry in $servers) {
+
+    $server = $entry.ServerName
+    Write-Log "==== Processing $server ===="
+
+    $status         = "Unknown"
+    $currentVersion = $null
+    $notes          = ""
+    $rebootTime     = ""
+
+    # Connectivity check
+    if (-not (Test-Connection -ComputerName $server -Count 1 -Quiet)) {
+        $status = "Unreachable"
+        $notes  = "Ping failed"
+        Write-Log "$server unreachable"
+
+        $compliance += [pscustomobject]@{
+            Server         = $server
+            Status         = $status
+            CurrentVersion = $currentVersion
+            Notes          = $notes
+            RebootTime     = $rebootTime
+        }
+        continue
+    }
+
+    # Remote execution
+    try {
+        $result = Invoke-Command -ComputerName $server -ScriptBlock {
+
+            param($installerPath, $targetVersion)
+
+            $output = @{
+                CurrentVersion = $null
+                Status         = ""
+                Notes          = ""
+                RebootTime     = ""
+            }
+
+            # Check installer accessibility
+            if (-not (Test-Path $installerPath)) {
+                $output.Status = "Failed"
+                $output.Notes  = "Installer not accessible"
+                return $output
+            }
+
+            # Get current VMware Tools version
+            try {
+                $tools = Get-ItemProperty "HKLM:\SOFTWARE\VMware, Inc.\VMware Tools"
+                $output.CurrentVersion = $tools.Version
+            }
+            catch {
+                $output.Status = "Not Installed"
+                $output.Notes  = "VMware Tools not installed"
+                return $output
+            }
+
+            # Compare versions
+            if ([version]$output.CurrentVersion -ge [version]$targetVersion) {
+                $output.Status = "Up to Date"
+                return $output
+            }
+
+            # Run upgrade (silent, reboot NOT suppressed)
+            $process = Start-Process $installerPath -ArgumentList '/S /v"/qn"' -Wait -PassThru
+
+            if ($process.ExitCode -eq 0) {
+                $output.Status = "Upgraded"
+            }
+            elseif ($process.ExitCode -eq 3010) {
+                $output.Status = "Upgraded"
+            }
+            else {
+                $output.Status = "Failed"
+                $output.Notes  = "Installer exit code $($process.ExitCode)"
+                return $output
+            }
+
+            # Handle reboot scheduling if required
+            if ($process.ExitCode -eq 3010) {
+
+                $easternTZ = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+                $now = Get-Date
+
+                $nowEastern = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId(
+                    $now,
+                    [System.TimeZoneInfo]::Local.Id,
+                    $easternTZ.Id
+                )
+
+                $startWindow = (Get-Date).Date.AddHours(20) # 8 PM
+                $endWindow   = (Get-Date).Date.AddHours(22) # 10 PM
+
+                if ($nowEastern -lt $startWindow) {
+                    $rebootTimeEastern = $startWindow
+                }
+                elseif ($nowEastern -ge $startWindow -and $nowEastern -le $endWindow) {
+                    $rebootTimeEastern = $nowEastern
+                }
+                else {
+                    $rebootTimeEastern = $startWindow.AddDays(1)
+                }
+
+                $rebootTimeLocal = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId(
+                    $rebootTimeEastern,
+                    $easternTZ.Id,
+                    [System.TimeZoneInfo]::Local.Id
+                )
+
+                $taskName = "VMwareToolsReboot"
+
+                if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+                    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+                }
+
+                $action  = New-ScheduledTaskAction -Execute "shutdown.exe" -Argument "/r /t 0 /f"
+                $trigger = New-ScheduledTaskTrigger -Once -At $rebootTimeLocal
+
+                Register-ScheduledTask -Action $action -Trigger $trigger `
+                    -TaskName $taskName `
+                    -Description "Reboot after VMware Tools upgrade" `
+                    -User "SYSTEM" -RunLevel Highest
+
+                $output.Notes      = "Reboot scheduled at $($rebootTimeLocal)"
+                $output.RebootTime = $rebootTimeLocal
+            }
+
+            return $output
+
+        } -ArgumentList $installerPath, $targetVersion -ErrorAction Stop
+
+        $status         = $result.Status
+        $currentVersion = $result.CurrentVersion
+        $notes          = $result.Notes
+        $rebootTime     = $result.RebootTime
+
+        Write-Log "$server -> $status $notes"
+    }
+    catch {
+        $status = "Failed"
+        $notes  = $_.Exception.Message
+        Write-Log "$server FAILED: $notes"
+    }
+
+    # Add to compliance report
+    $compliance += [pscustomobject]@{
+        Server         = $server
+        Status         = $status
+        CurrentVersion = $currentVersion
+        Notes          = $notes
+        RebootTime     = $rebootTime
+    }
+
+    Write-Log "==== Completed $server ===="
+}
+
+# ================================
+# EXPORT REPORT
+# ================================
+$compliance | Export-Csv -Path $reportFile -NoTypeInformation
+
+Write-Log "===== ALL DONE ====="
+Write-Log "Compliance report saved to $reportFile"
