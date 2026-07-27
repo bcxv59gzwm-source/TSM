@@ -47,7 +47,7 @@ export class UnifiClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -75,6 +75,54 @@ export class UnifiClient {
     }
 
     return data as T;
+  }
+
+  // ---- Generic REST resource CRUD (networkconf, wlanconf, portforward, firewallrule) --
+
+  private async restList(resource: string, site?: string): Promise<unknown[]> {
+    const s = this.resolveSite(site);
+    const data = await this.request<{ data: unknown[] }>(
+      "GET",
+      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/${resource}`,
+    );
+    return data.data;
+  }
+
+  private async restCreate(
+    resource: string,
+    config: Record<string, unknown>,
+    site?: string,
+  ): Promise<unknown> {
+    const s = this.resolveSite(site);
+    const data = await this.request<{ data: unknown[] }>(
+      "POST",
+      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/${resource}`,
+      config,
+    );
+    return data.data?.[0] ?? data;
+  }
+
+  private async restUpdate(
+    resource: string,
+    id: string,
+    config: Record<string, unknown>,
+    site?: string,
+  ): Promise<unknown> {
+    const s = this.resolveSite(site);
+    const data = await this.request<{ data: unknown[] }>(
+      "PUT",
+      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/${resource}/${encodeURIComponent(id)}`,
+      config,
+    );
+    return data.data?.[0] ?? data;
+  }
+
+  private async restDelete(resource: string, id: string, site?: string): Promise<unknown> {
+    const s = this.resolveSite(site);
+    return this.request(
+      "DELETE",
+      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/${resource}/${encodeURIComponent(id)}`,
+    );
   }
 
   // ---- Sites & devices --------------------------------------------------
@@ -140,40 +188,68 @@ export class UnifiClient {
 
   // ---- Network config -----------------------------------------------------
 
-  async listNetworks(site?: string): Promise<unknown[]> {
-    const s = this.resolveSite(site);
-    const data = await this.request<{ data: unknown[] }>(
-      "GET",
-      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/networkconf`,
-    );
-    return data.data;
+  listNetworks(site?: string): Promise<unknown[]> {
+    return this.restList("networkconf", site);
   }
 
-  async listWlans(site?: string): Promise<unknown[]> {
-    const s = this.resolveSite(site);
-    const data = await this.request<{ data: unknown[] }>(
-      "GET",
-      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/wlanconf`,
-    );
-    return data.data;
+  createNetwork(config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restCreate("networkconf", config, site);
   }
 
-  async listPortForwards(site?: string): Promise<unknown[]> {
-    const s = this.resolveSite(site);
-    const data = await this.request<{ data: unknown[] }>(
-      "GET",
-      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/portforward`,
-    );
-    return data.data;
+  updateNetwork(id: string, config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restUpdate("networkconf", id, config, site);
   }
 
-  async listFirewallRules(site?: string): Promise<unknown[]> {
-    const s = this.resolveSite(site);
-    const data = await this.request<{ data: unknown[] }>(
-      "GET",
-      `/proxy/network/api/s/${encodeURIComponent(s)}/rest/firewallrule`,
-    );
-    return data.data;
+  deleteNetwork(id: string, site?: string): Promise<unknown> {
+    return this.restDelete("networkconf", id, site);
+  }
+
+  listWlans(site?: string): Promise<unknown[]> {
+    return this.restList("wlanconf", site);
+  }
+
+  createWlan(config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restCreate("wlanconf", config, site);
+  }
+
+  updateWlan(id: string, config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restUpdate("wlanconf", id, config, site);
+  }
+
+  deleteWlan(id: string, site?: string): Promise<unknown> {
+    return this.restDelete("wlanconf", id, site);
+  }
+
+  listPortForwards(site?: string): Promise<unknown[]> {
+    return this.restList("portforward", site);
+  }
+
+  createPortForward(config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restCreate("portforward", config, site);
+  }
+
+  updatePortForward(id: string, config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restUpdate("portforward", id, config, site);
+  }
+
+  deletePortForward(id: string, site?: string): Promise<unknown> {
+    return this.restDelete("portforward", id, site);
+  }
+
+  listFirewallRules(site?: string): Promise<unknown[]> {
+    return this.restList("firewallrule", site);
+  }
+
+  createFirewallRule(config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restCreate("firewallrule", config, site);
+  }
+
+  updateFirewallRule(id: string, config: Record<string, unknown>, site?: string): Promise<unknown> {
+    return this.restUpdate("firewallrule", id, config, site);
+  }
+
+  deleteFirewallRule(id: string, site?: string): Promise<unknown> {
+    return this.restDelete("firewallrule", id, site);
   }
 
   // ---- Stats & alerts -------------------------------------------------------

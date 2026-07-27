@@ -163,6 +163,13 @@ export function registerUnifiTools(server: McpServer, client: UnifiClient): void
 
   // ---- Network config ---------------------------------------------------------
 
+  const configParam = z
+    .record(z.string(), z.unknown())
+    .describe(
+      "Raw UniFi config object for this resource. Field names/shapes are undocumented by Ubiquiti and version-dependent — call the matching list_* tool first and use an existing entry (or the site's default entry) as a template, then adjust only the fields you want to change.",
+    );
+  const idParam = z.string().describe("The resource's `_id` field, from the matching list_* tool.");
+
   server.registerTool(
     "list_networks",
     {
@@ -173,6 +180,56 @@ export function registerUnifiTools(server: McpServer, client: UnifiClient): void
     async ({ site }) => {
       try {
         return json(await client.listNetworks(site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "create_network",
+    {
+      title: "Create UniFi network/VLAN",
+      description:
+        "Create a new network (LAN/VLAN) on a site. Call list_networks first and base the config on an existing entry's shape (e.g. purpose, vlan, ip_subnet, dhcpd_* fields).",
+      inputSchema: { config: configParam, site: siteParam },
+    },
+    async ({ config, site }) => {
+      try {
+        return json(await client.createNetwork(config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_network",
+    {
+      title: "Update UniFi network/VLAN",
+      description:
+        "Update an existing network (LAN/VLAN) by _id. Fetch the current object via list_networks, modify only the fields you want changed, and pass the full merged object back.",
+      inputSchema: { id: idParam, config: configParam, site: siteParam },
+    },
+    async ({ id, config, site }) => {
+      try {
+        return json(await client.updateNetwork(id, config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_network",
+    {
+      title: "Delete UniFi network/VLAN",
+      description: "Delete a network (LAN/VLAN) by _id. This is destructive and disconnects any clients on it.",
+      inputSchema: { id: idParam, site: siteParam },
+    },
+    async ({ id, site }) => {
+      try {
+        return json(await client.deleteNetwork(id, site));
       } catch (err) {
         return jsonError(err);
       }
@@ -196,6 +253,56 @@ export function registerUnifiTools(server: McpServer, client: UnifiClient): void
   );
 
   server.registerTool(
+    "create_wlan",
+    {
+      title: "Create UniFi WLAN",
+      description:
+        "Create a new wireless network (SSID) on a site. Call list_wlans first and base the config on an existing entry's shape (e.g. name, security, wpa_mode, x_passphrase, networkconf_id, enabled).",
+      inputSchema: { config: configParam, site: siteParam },
+    },
+    async ({ config, site }) => {
+      try {
+        return json(await client.createWlan(config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_wlan",
+    {
+      title: "Update UniFi WLAN",
+      description:
+        "Update an existing wireless network (SSID) by _id. Fetch the current object via list_wlans, modify only the fields you want changed, and pass the full merged object back.",
+      inputSchema: { id: idParam, config: configParam, site: siteParam },
+    },
+    async ({ id, config, site }) => {
+      try {
+        return json(await client.updateWlan(id, config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_wlan",
+    {
+      title: "Delete UniFi WLAN",
+      description: "Delete a wireless network (SSID) by _id. This is destructive and disconnects any clients on it.",
+      inputSchema: { id: idParam, site: siteParam },
+    },
+    async ({ id, site }) => {
+      try {
+        return json(await client.deleteWlan(id, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
     "list_port_forwards",
     {
       title: "List UniFi port forwarding rules",
@@ -212,6 +319,56 @@ export function registerUnifiTools(server: McpServer, client: UnifiClient): void
   );
 
   server.registerTool(
+    "create_port_forward",
+    {
+      title: "Create UniFi port forwarding rule",
+      description:
+        "Create a new port forwarding rule on a site. Call list_port_forwards first and base the config on an existing entry's shape (e.g. name, fwd, fwd_port, dst_port, proto, src, enabled).",
+      inputSchema: { config: configParam, site: siteParam },
+    },
+    async ({ config, site }) => {
+      try {
+        return json(await client.createPortForward(config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_port_forward",
+    {
+      title: "Update UniFi port forwarding rule",
+      description:
+        "Update an existing port forwarding rule by _id. Fetch the current object via list_port_forwards, modify only the fields you want changed, and pass the full merged object back.",
+      inputSchema: { id: idParam, config: configParam, site: siteParam },
+    },
+    async ({ id, config, site }) => {
+      try {
+        return json(await client.updatePortForward(id, config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_port_forward",
+    {
+      title: "Delete UniFi port forwarding rule",
+      description: "Delete a port forwarding rule by _id.",
+      inputSchema: { id: idParam, site: siteParam },
+    },
+    async ({ id, site }) => {
+      try {
+        return json(await client.deletePortForward(id, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
     "list_firewall_rules",
     {
       title: "List UniFi firewall rules",
@@ -221,6 +378,56 @@ export function registerUnifiTools(server: McpServer, client: UnifiClient): void
     async ({ site }) => {
       try {
         return json(await client.listFirewallRules(site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "create_firewall_rule",
+    {
+      title: "Create UniFi firewall rule",
+      description:
+        "Create a new firewall rule on a site. Call list_firewall_rules first and base the config on an existing entry's shape (e.g. name, action, ruleset, protocol, src_address, dst_address, enabled). Firewall rule order matters on UniFi — check existing rule_index values.",
+      inputSchema: { config: configParam, site: siteParam },
+    },
+    async ({ config, site }) => {
+      try {
+        return json(await client.createFirewallRule(config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_firewall_rule",
+    {
+      title: "Update UniFi firewall rule",
+      description:
+        "Update an existing firewall rule by _id. Fetch the current object via list_firewall_rules, modify only the fields you want changed, and pass the full merged object back.",
+      inputSchema: { id: idParam, config: configParam, site: siteParam },
+    },
+    async ({ id, config, site }) => {
+      try {
+        return json(await client.updateFirewallRule(id, config, site));
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_firewall_rule",
+    {
+      title: "Delete UniFi firewall rule",
+      description: "Delete a firewall rule by _id.",
+      inputSchema: { id: idParam, site: siteParam },
+    },
+    async ({ id, site }) => {
+      try {
+        return json(await client.deleteFirewallRule(id, site));
       } catch (err) {
         return jsonError(err);
       }

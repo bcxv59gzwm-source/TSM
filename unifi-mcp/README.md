@@ -19,10 +19,10 @@ required.
 | `block_client` | Block a client by MAC |
 | `unblock_client` | Unblock a client by MAC |
 | `reconnect_client` | Force-reconnect (kick) a client by MAC |
-| `list_networks` | List networks/VLANs on a site |
-| `list_wlans` | List wireless networks (SSIDs) on a site |
-| `list_port_forwards` | List port forwarding rules on a site |
-| `list_firewall_rules` | List firewall rules on a site |
+| `list_networks` / `create_network` / `update_network` / `delete_network` | Manage networks/VLANs on a site |
+| `list_wlans` / `create_wlan` / `update_wlan` / `delete_wlan` | Manage wireless networks (SSIDs) on a site |
+| `list_port_forwards` / `create_port_forward` / `update_port_forward` / `delete_port_forward` | Manage port forwarding rules on a site |
+| `list_firewall_rules` / `create_firewall_rule` / `update_firewall_rule` / `delete_firewall_rule` | Manage firewall rules on a site |
 | `get_site_health` | Get per-subsystem health/stats for a site |
 | `list_events` | List recent events on a site |
 | `list_alerts` | List alerts/alarms on a site |
@@ -30,6 +30,11 @@ required.
 Every tool except `list_sites` accepts an optional `site` parameter (the
 site's internal short name from `list_sites`, not its friendly description).
 When omitted, the server falls back to `UNIFI_DEFAULT_SITE` (or `"default"`).
+
+The `create_*`/`update_*` tools take a `config` object of raw UniFi fields.
+Ubiquiti doesn't publish a schema for these — the intended flow is: call the
+matching `list_*` tool, use an existing entry as a template, and adjust only
+the fields that need to change.
 
 ## Setup
 
@@ -77,6 +82,8 @@ run `npm start`.
   WLANs, port forwarding, and firewall rules — broader than the official
   hosted UniFi Network Integration API, but unofficial/undocumented and
   subject to change between controller versions.
-- `block_client` / `unblock_client` / `reconnect_client` mutate live network
-  state; the calling assistant should confirm intent before invoking them
-  against a production network.
+- `block_client` / `unblock_client` / `reconnect_client` and all `create_*` /
+  `update_*` / `delete_*` network-config tools mutate live network state; the
+  calling assistant should confirm intent before invoking them against a
+  production network. `delete_network` / `delete_wlan` disconnect any clients
+  on that network/SSID.
